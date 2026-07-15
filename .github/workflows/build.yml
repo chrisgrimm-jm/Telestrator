@@ -8,6 +8,13 @@ on:
 jobs:
   build-mac:
     runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            label: apple-silicon
+          - arch: x64
+            label: intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,12 +22,14 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+        env:
+          npm_config_arch: ${{ matrix.arch }}
       - name: Build .dmg
-        run: npx electron-builder --mac --publish never
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
       - name: Upload dmg
         uses: actions/upload-artifact@v4
         with:
-          name: Telestrator-mac
+          name: Telestrator-mac-${{ matrix.label }}
           path: dist/*.dmg
 
   build-win:
