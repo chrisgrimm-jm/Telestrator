@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+  <title>Telestrator</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #111; touch-action: none; user-select: none; -webkit-user-select: none; }
+
+    /* 16:9 stage centered in the window — video and canvas share this exact
+       box on every screen, so normalized coords line up with the video */
+    #container {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(100vw, calc(100vh * 16 / 9));
+      height: min(100vh, calc(100vw * 9 / 16));
+      background: #000;
+    }
+
+    #video-feed {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    #yt-wrap {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+      display: none;
+    }
+    #yt-wrap iframe {
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    #no-video {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: #555;
+      font-family: -apple-system, sans-serif;
+      font-size: 16px;
+      text-align: center;
+      z-index: 0;
+    }
+
+    #draw-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      cursor: crosshair;
+    }
+
+    #toolbar {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: rgba(0,0,0,0.85);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 16px;
+      padding: 10px 16px;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    .tool-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      border: 2px solid transparent;
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .tool-btn:active { transform: scale(0.92); }
+    .tool-btn.active { border-color: #fff; background: rgba(255,255,255,0.25); }
+
+    .color-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 3px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .color-btn.active { border-color: #fff; transform: scale(1.15); }
+
+    .divider {
+      width: 1px;
+      height: 30px;
+      background: rgba(255,255,255,0.2);
+      margin: 0 4px;
+    }
+
+    .size-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      border: 2px solid transparent;
+      background: rgba(255,255,255,0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .size-btn.active { border-color: #fff; background: rgba(255,255,255,0.25); }
+    .size-dot {
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    #connection-status {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 10;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #e74c3c;
+      transition: background 0.3s;
+    }
+    #connection-status.connected { background: #2ecc71; }
+
+    #freeze-badge {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      background: rgba(231, 76, 60, 0.9);
+      color: #fff;
+      font-family: -apple-system, sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 14px;
+      border-radius: 8px;
+      display: none;
+      letter-spacing: 0.5px;
+    }
+    #freeze-badge.visible { display: block; }
+
+    #side-badges {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .side-badge {
+      color: #fff;
+      font-family: -apple-system, sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 14px;
+      border-radius: 8px;
+      letter-spacing: 0.5px;
+      display: none;
+    }
+    .side-badge.visible { display: block; }
+    #hidden-badge { background: rgba(230, 126, 34, 0.9); }
+    #autoclear-badge { background: rgba(52, 152, 219, 0.9); }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="no-video">No video feed<br><small>Go to Settings to start capture</small></div>
+    <img id="video-feed" alt="">
+    <div id="yt-wrap"><div id="yt-player"></div></div>
+    <canvas id="draw-canvas"></canvas>
+  </div>
+
+  <div id="connection-status"></div>
+  <div id="freeze-badge">FROZEN</div>
+  <div id="side-badges">
+    <div class="side-badge" id="hidden-badge">HIDDEN FROM AIR</div>
+    <div class="side-badge" id="autoclear-badge">AUTO-CLEAR</div>
+  </div>
+
+  <div id="toolbar">
+    <button class="tool-btn active" data-tool="pen" title="Pen">&#9998;</button>
+    <button class="tool-btn" data-tool="arrow" title="Arrow">&#10132;</button>
+    <button class="tool-btn" data-tool="circle" title="Circle">&#9711;</button>
+    <button class="tool-btn" data-tool="spotlight" title="Spotlight">&#9673;</button>
+
+    <div class="divider"></div>
+
+    <div class="color-btn active" data-color="#FFE119" style="background:#FFE119" title="Yellow"></div>
+    <div class="color-btn" data-color="#E6194B" style="background:#E6194B" title="Red"></div>
+    <div class="color-btn" data-color="#000000" style="background:#000000" title="Black"></div>
+    <div class="color-btn" data-color="#4363D8" style="background:#4363D8" title="Blue"></div>
+    <div class="color-btn" data-color="#FFFFFF" style="background:#FFFFFF" title="White"></div>
+
+    <div class="divider"></div>
+
+    <div class="size-btn active" data-size="4" title="Small"><div class="size-dot" style="width:6px;height:6px"></div></div>
+    <div class="size-btn" data-size="8" title="Medium"><div class="size-dot" style="width:10px;height:10px"></div></div>
+    <div class="size-btn" data-size="14" title="Large"><div class="size-dot" style="width:16px;height:16px"></div></div>
+
+    <div class="divider"></div>
+
+    <button class="tool-btn" id="btn-undo" title="Undo">&#8630;</button>
+    <button class="tool-btn" id="btn-clear" title="Clear">&#10005;</button>
+    <button class="tool-btn" id="btn-freeze" title="Freeze Frame">&#10074;&#10074;</button>
+
+    <div class="divider" id="video-divider" style="display:none"></div>
+    <button class="tool-btn" id="btn-vid-back" title="Back 10s" style="display:none">&#8617;</button>
+    <button class="tool-btn" id="btn-vid-play" title="Play/Pause" style="display:none">&#9654;</button>
+    <button class="tool-btn" id="btn-vid-fwd" title="Forward 10s" style="display:none">&#8618;</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('draw-canvas');
+    const ctx = canvas.getContext('2d');
+    const videoFeed = document.getElementById('video-feed');
+    const statusDot = document.getElementById('connection-status');
+    const freezeBadge = document.getElementById('freeze-badge');
+
+    let ws;
+    let tool = 'pen';
+    let color = '#FFE119';
+    let lineWidth = 4;
+    let drawing = false;
+    let currentStroke = null;
+    let strokes = [];
+    let frozen = false;
+    let frozenFrame = null;
+    let strokeIdCounter = 0;
+
+    function genId() {
+      return `s_${Date.now()}_${strokeIdCounter++}`;
+    }
+
+    // --- Canvas sizing ---
+    function resizeCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.clientWidth * dpr;
+      canvas.height = canvas.clientHeight * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      redraw();
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // --- Coordinate normalization (0-1 range) ---
+    function getNormCoords(e) {
+      const rect = canvas.getBoundingClientRect();
+      let clientX, clientY;
+      if (e.touches) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+      return {
+        x: (clientX - rect.left) / rect.width,
+        y: (clientY - rect.top) / rect.height
+      };
+    }
+
+    function toCanvas(nx, ny) {
+      return {
+        x: nx * canvas.clientWidth,
+        y: ny * canvas.clientHeight
+      };
+    }
+
+    // --- Drawing ---
+    function drawStroke(s) {
+      if (!s.points || s.points.length < 1) return;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.lineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      if (s.tool === 'pen' || s.tool === 'arrow') {
+        ctx.beginPath();
+        const p0 = toCanvas(s.points[0].x, s.points[0].y);
+        ctx.moveTo(p0.x, p0.y);
+        for (let i = 1; i < s.points.length; i++) {
+          const p = toCanvas(s.points[i].x, s.points[i].y);
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+
+        if (s.tool === 'arrow' && s.points.length >= 2) {
+          const last = s.points[s.points.length - 1];
+          const prev = s.points[Math.max(0, s.points.length - 5)];
+          const lp = toCanvas(last.x, last.y);
+          const pp = toCanvas(prev.x, prev.y);
+          const angle = Math.atan2(lp.y - pp.y, lp.x - pp.x);
+          const headLen = s.lineWidth * 4;
+          ctx.beginPath();
+          ctx.moveTo(lp.x, lp.y);
+          ctx.lineTo(lp.x - headLen * Math.cos(angle - 0.4), lp.y - headLen * Math.sin(angle - 0.4));
+          ctx.moveTo(lp.x, lp.y);
+          ctx.lineTo(lp.x - headLen * Math.cos(angle + 0.4), lp.y - headLen * Math.sin(angle + 0.4));
+          ctx.stroke();
+        }
+      } else if (s.tool === 'circle') {
+        if (s.points.length >= 2) {
+          const p0 = toCanvas(s.points[0].x, s.points[0].y);
+          const p1 = toCanvas(s.points[s.points.length - 1].x, s.points[s.points.length - 1].y);
+          const cx = (p0.x + p1.x) / 2;
+          const cy = (p0.y + p1.y) / 2;
+          const rx = Math.abs(p1.x - p0.x) / 2;
+          const ry = Math.abs(p1.y - p0.y) / 2;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    }
+
+    function redraw() {
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      strokes.forEach(drawStroke);
+      if (currentStroke) drawStroke(currentStroke);
+    }
+
+    // Fade the current drawings out over ~0.8s, then drop them
+    function fadeAndClear() {
+      if (strokes.length === 0 && !currentStroke) return;
+      const snapshot = currentStroke ? [...strokes, currentStroke] : strokes;
+      strokes = [];
+      currentStroke = null;
+      drawing = false;
+      const start = performance.now();
+      const dur = 800;
+      let done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        redraw();
+      }
+      function step(now) {
+        if (done) return;
+        const t = (now - start) / dur;
+        if (t < 1) {
+          ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+          ctx.globalAlpha = 1 - t;
+          snapshot.forEach(drawStroke);
+          ctx.globalAlpha = 1;
+          requestAnimationFrame(step);
+        } else {
+          finish();
+        }
+      }
+      requestAnimationFrame(step);
+      // Failsafe: guarantee the clear lands even if rAF is throttled/paused
+      setTimeout(finish, dur + 200);
+    }
+
+    function updateBadges(state) {
+      if ('hidden' in state) {
+        document.getElementById('hidden-badge').classList.toggle('visible', !!state.hidden);
+      }
+      if (state.autoClear) {
+        const b = document.getElementById('autoclear-badge');
+        b.textContent = `AUTO-CLEAR ${state.autoClear.seconds}s`;
+        b.classList.toggle('visible', state.autoClear.enabled);
+      }
+    }
+
+    // --- Input handlers ---
+    let lastLiveUpdate = 0;
+
+    function startDraw(e) {
+      e.preventDefault();
+      if (tool === 'spotlight') {
+        const coords = getNormCoords(e);
+        sendWS({ type: 'spotlight', x: coords.x, y: coords.y, active: true });
+        drawing = true;
+        return;
+      }
+      drawing = true;
+      const coords = getNormCoords(e);
+      currentStroke = {
+        id: genId(),
+        tool,
+        color,
+        lineWidth,
+        points: [coords]
+      };
+      // Announce the stroke immediately so the output draws it live
+      sendWS({ type: 'stroke', stroke: currentStroke });
+    }
+
+    function moveDraw(e) {
+      e.preventDefault();
+      if (!drawing) return;
+      if (tool === 'spotlight') {
+        const coords = getNormCoords(e);
+        sendWS({ type: 'spotlight', x: coords.x, y: coords.y, active: true });
+        return;
+      }
+      const coords = getNormCoords(e);
+      if (tool === 'circle') {
+        currentStroke.points = [currentStroke.points[0], coords];
+      } else {
+        currentStroke.points.push(coords);
+      }
+      redraw();
+      // Stream points as they're drawn (throttled to ~30 updates/sec)
+      const now = performance.now();
+      if (now - lastLiveUpdate > 33) {
+        lastLiveUpdate = now;
+        sendWS({ type: 'stroke-update', id: currentStroke.id, points: currentStroke.points });
+      }
+    }
+
+    function endDraw(e) {
+      e.preventDefault();
+      if (tool === 'spotlight') {
+        sendWS({ type: 'spotlight', x: 0, y: 0, active: false });
+        drawing = false;
+        return;
+      }
+      if (!drawing || !currentStroke) return;
+      drawing = false;
+      // Send the final point set, then keep the stroke locally
+      sendWS({ type: 'stroke-update', id: currentStroke.id, points: currentStroke.points });
+      strokes.push(currentStroke);
+      currentStroke = null;
+      redraw();
+    }
+
+    canvas.addEventListener('pointerdown', startDraw);
+    canvas.addEventListener('pointermove', moveDraw);
+    canvas.addEventListener('pointerup', endDraw);
+    canvas.addEventListener('pointercancel', endDraw);
+
+    // --- Toolbar ---
+    document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        tool = btn.dataset.tool;
+      });
+    });
+
+    document.querySelectorAll('.color-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        color = btn.dataset.color;
+      });
+    });
+
+    document.querySelectorAll('.size-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        lineWidth = parseInt(btn.dataset.size);
+      });
+    });
+
+    document.getElementById('btn-undo').addEventListener('click', () => {
+      strokes.pop();
+      sendWS({ type: 'undo' });
+      redraw();
+    });
+
+    document.getElementById('btn-clear').addEventListener('click', () => {
+      sendWS({ type: 'clear' });
+      fadeAndClear();
+    });
+
+    document.getElementById('btn-freeze').addEventListener('click', () => {
+      frozen = !frozen;
+      const btn = document.getElementById('btn-freeze');
+      if (frozen) {
+        btn.classList.add('active');
+        freezeBadge.classList.add('visible');
+        // Capture current frame as frozen image (skip if no live feed)
+        if (feedAttached && videoFeed.naturalWidth > 0) {
+          const c = document.createElement('canvas');
+          c.width = videoFeed.naturalWidth;
+          c.height = videoFeed.naturalHeight;
+          const cx = c.getContext('2d');
+          cx.drawImage(videoFeed, 0, 0);
+          frozenFrame = c.toDataURL('image/jpeg', 0.9);
+          videoFeed.src = frozenFrame;
+        }
+      } else {
+        btn.classList.remove('active');
+        freezeBadge.classList.remove('visible');
+        frozenFrame = null;
+        feedAttached = false;
+        videoFeed.removeAttribute('src');
+        checkVideoFeed();
+      }
+    });
+
+    // --- Video feed ---
+    // Only attach the MJPEG stream when capture is actually running,
+    // polling the server so the feed appears/disappears automatically.
+    let feedAttached = false;
+    async function checkVideoFeed() {
+      if (frozen) return;
+      try {
+        const res = await fetch('/api/devices');
+        const data = await res.json();
+        const running = data.current !== null;
+        if (running && !feedAttached) {
+          feedAttached = true;
+          videoFeed.src = '/video/stream';
+        } else if (!running && feedAttached) {
+          feedAttached = false;
+          videoFeed.removeAttribute('src');
+        }
+      } catch (e) { /* server unreachable; try again next poll */ }
+    }
+    videoFeed.onerror = () => {
+      feedAttached = false;
+      videoFeed.removeAttribute('src');
+    };
+    checkVideoFeed();
+    setInterval(checkVideoFeed, 3000);
+
+    // --- WebSocket ---
+    let reconnectTimer = null;
+    function connectWS() {
+      // Never allow two parallel sockets (duplicate broadcasts corrupt state)
+      if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}?role=draw`);
+
+      ws.onopen = () => {
+        statusDot.classList.add('connected');
+      };
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        switch (msg.type) {
+          case 'state':
+            strokes = msg.strokes || [];
+            redraw();
+            setTestVideo(msg.testVideo);
+            updateBadges(msg);
+            break;
+          case 'hidden':
+            updateBadges({ hidden: msg.hidden });
+            break;
+          case 'autoclear':
+            updateBadges({ autoClear: msg.autoClear });
+            break;
+          case 'stroke':
+            strokes.push(msg.stroke);
+            redraw();
+            break;
+          case 'stroke-update': {
+            const i = strokes.findIndex(s => s.id === msg.id);
+            if (i !== -1) {
+              strokes[i].points = msg.points;
+              redraw();
+            }
+            break;
+          }
+          case 'undo':
+            strokes.pop();
+            redraw();
+            break;
+          case 'clear':
+            if (msg.fade) fadeAndClear();
+            else { strokes = []; redraw(); }
+            break;
+          case 'test-video':
+            setTestVideo(msg.testVideo);
+            break;
+        }
+      };
+
+      ws.onclose = () => {
+        statusDot.classList.remove('connected');
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectWS, 2000);
+      };
+
+      ws.onerror = () => ws.close();
+    }
+
+    function sendWS(msg) {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify(msg));
+      }
+    }
+
+    connectWS();
+
+    // --- YouTube test video (drawing page is the playback controller) ---
+    const ytWrap = document.getElementById('yt-wrap');
+    const noVideo = document.getElementById('no-video');
+    const vidControls = ['video-divider', 'btn-vid-back', 'btn-vid-play', 'btn-vid-fwd']
+      .map(id => document.getElementById(id));
+    let ytPlayer = null;
+    let ytReady = false;
+    let ytApiLoaded = false;
+    let pendingVideoId = null;
+    let currentVideoId = null;
+
+    function loadYTApi() {
+      if (ytApiLoaded) return;
+      ytApiLoaded = true;
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(tag);
+    }
+
+    window.onYouTubeIframeAPIReady = () => {
+      if (pendingVideoId) createPlayer(pendingVideoId);
+    };
+
+    function createPlayer(videoId) {
+      if (ytPlayer) {
+        ytPlayer.destroy();
+        ytPlayer = null;
+        ytReady = false;
+      }
+      ytPlayer = new YT.Player('yt-player', {
+        videoId,
+        playerVars: { controls: 0, disablekb: 1, rel: 0, modestbranding: 1, playsinline: 1 },
+        events: {
+          onReady: (e) => {
+            ytReady = true;
+            e.target.mute();
+          },
+          onStateChange: (e) => {
+            const playing = e.data === YT.PlayerState.PLAYING;
+            const btn = document.getElementById('btn-vid-play');
+            btn.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+          }
+        }
+      });
+    }
+
+    function setTestVideo(tv) {
+      const videoId = tv ? tv.videoId : null;
+      if (videoId === currentVideoId) return;
+      currentVideoId = videoId;
+
+      if (videoId) {
+        ytWrap.style.display = 'block';
+        noVideo.style.display = 'none';
+        vidControls.forEach(el => el.style.display = 'flex');
+        if (window.YT && window.YT.Player) {
+          createPlayer(videoId);
+        } else {
+          pendingVideoId = videoId;
+          loadYTApi();
+        }
+      } else {
+        ytWrap.style.display = 'none';
+        noVideo.style.display = '';
+        vidControls.forEach(el => el.style.display = 'none');
+        if (ytPlayer) {
+          ytPlayer.destroy();
+          ytPlayer = null;
+          ytReady = false;
+        }
+        // Restore the placeholder div the YT API replaced with an iframe
+        ytWrap.innerHTML = '<div id="yt-player"></div>';
+      }
+    }
+
+    function sendVideoControl(action, time) {
+      sendWS({ type: 'video-control', action, time, playing: isPlaying() });
+    }
+
+    function isPlaying() {
+      return ytReady && ytPlayer && ytPlayer.getPlayerState() === YT.PlayerState.PLAYING;
+    }
+
+    document.getElementById('btn-vid-play').addEventListener('click', () => {
+      if (!ytReady) return;
+      if (isPlaying()) {
+        ytPlayer.pauseVideo();
+        sendWS({ type: 'video-control', action: 'pause', time: ytPlayer.getCurrentTime() });
+      } else {
+        ytPlayer.playVideo();
+        sendWS({ type: 'video-control', action: 'play', time: ytPlayer.getCurrentTime() });
+      }
+    });
+
+    document.getElementById('btn-vid-back').addEventListener('click', () => {
+      if (!ytReady) return;
+      const t = Math.max(0, ytPlayer.getCurrentTime() - 10);
+      ytPlayer.seekTo(t, true);
+      sendVideoControl('seek', t);
+    });
+
+    document.getElementById('btn-vid-fwd').addEventListener('click', () => {
+      if (!ytReady) return;
+      const t = ytPlayer.getCurrentTime() + 10;
+      ytPlayer.seekTo(t, true);
+      sendVideoControl('seek', t);
+    });
+
+    // Periodic sync so the output page stays lined up
+    setInterval(() => {
+      if (ytReady && currentVideoId) {
+        sendWS({ type: 'video-control', action: 'sync', time: ytPlayer.getCurrentTime(), playing: isPlaying() });
+      }
+    }, 3000);
+  </script>
+</body>
+</html>

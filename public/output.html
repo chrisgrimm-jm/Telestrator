@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telestrator Output</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000000;
+      cursor: none;
+    }
+    /* 16:9 stage centered in the window — must match the drawing page's
+       stage so normalized stroke coords land on the same video pixels */
+    #stage {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(100vw, calc(100vh * 16 / 9));
+      height: min(100vh, calc(100vw * 9 / 16));
+    }
+    #output-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+    #spotlight {
+      position: absolute;
+      width: 80px;
+      height: 80px;
+      border: 4px solid rgba(255, 255, 255, 0.9);
+      border-radius: 50%;
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.5), inset 0 0 20px rgba(255, 255, 255, 0.1);
+      pointer-events: none;
+      display: none;
+      transform: translate(-50%, -50%);
+      z-index: 2;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="output-canvas"></canvas>
+    <div id="spotlight"></div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('output-canvas');
+    const ctx = canvas.getContext('2d');
+    const spotlightEl = document.getElementById('spotlight');
+
+    let strokes = [];
+    let hidden = false;
+
+    function applyKeyMode(mode) {
+      document.body.style.background = mode === 'chroma' ? '#00FF00' : '#000000';
+    }
+
+    function resizeCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.clientWidth * dpr;
+      canvas.height = canvas.clientHeight * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      redraw();
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function toCanvas(nx, ny) {
+      return {
+        x: nx * canvas.clientWidth,
+        y: ny * canvas.clientHeight
+      };
+    }
+
+    function drawStroke(s) {
+      if (!s.points || s.points.length < 1) return;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.lineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      if (s.tool === 'pen' || s.tool === 'arrow') {
+        ctx.beginPath();
+        const p0 = toCanvas(s.points[0].x, s.points[0].y);
+        ctx.moveTo(p0.x, p0.y);
+        for (let i = 1; i < s.points.length; i++) {
+          const p = toCanvas(s.points[i].x, s.points[i].y);
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+
+        if (s.tool === 'arrow' && s.points.length >= 2) {
+          const last = s.points[s.points.length - 1];
+          const prev = s.points[Math.max(0, s.points.length - 5)];
+          const lp = toCanvas(last.x, last.y);
+          const pp = toCanvas(prev.x, prev.y);
+          const angle = Math.atan2(lp.y - pp.y, lp.x - pp.x);
+          const headLen = s.lineWidth * 4;
+          ctx.beginPath();
+          ctx.moveTo(lp.x, lp.y);
+          ctx.lineTo(lp.x - headLen * Math.cos(angle - 0.4), lp.y - headLen * Math.sin(angle - 0.4));
+          ctx.moveTo(lp.x, lp.y);
+          ctx.lineTo(lp.x - headLen * Math.cos(angle + 0.4), lp.y - headLen * Math.sin(angle + 0.4));
+          ctx.stroke();
+        }
+      } else if (s.tool === 'circle') {
+        if (s.points.length >= 2) {
+          const p0 = toCanvas(s.points[0].x, s.points[0].y);
+          const p1 = toCanvas(s.points[s.points.length - 1].x, s.points[s.points.length - 1].y);
+          const cx = (p0.x + p1.x) / 2;
+          const cy = (p0.y + p1.y) / 2;
+          const rx = Math.abs(p1.x - p0.x) / 2;
+          const ry = Math.abs(p1.y - p0.y) / 2;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    }
+
+    function redraw() {
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      if (hidden) return;
+      strokes.forEach(drawStroke);
+    }
+
+    // Fade the current drawings out over ~0.8s, then drop them
+    function fadeAndClear() {
+      if (strokes.length === 0) return;
+      const snapshot = strokes;
+      strokes = [];
+      const start = performance.now();
+      const dur = 800;
+      let done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        redraw();
+      }
+      function step(now) {
+        if (done) return;
+        const t = (now - start) / dur;
+        if (t < 1 && !hidden) {
+          ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+          ctx.globalAlpha = 1 - t;
+          snapshot.forEach(drawStroke);
+          ctx.globalAlpha = 1;
+          requestAnimationFrame(step);
+        } else {
+          finish();
+        }
+      }
+      requestAnimationFrame(step);
+      // Failsafe: guarantee the clear lands even if rAF is throttled/paused
+      setTimeout(finish, dur + 200);
+    }
+
+    // --- WebSocket ---
+    let ws = null;
+    let reconnectTimer = null;
+    function connectWS() {
+      if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}?role=output`);
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        switch (msg.type) {
+          case 'state':
+            strokes = msg.strokes || [];
+            hidden = !!msg.hidden;
+            if (msg.keyMode) applyKeyMode(msg.keyMode);
+            redraw();
+            break;
+          case 'keymode':
+            applyKeyMode(msg.keyMode);
+            break;
+          case 'hidden':
+            hidden = msg.hidden;
+            if (hidden) spotlightEl.style.display = 'none';
+            redraw();
+            break;
+          case 'stroke':
+            strokes.push(msg.stroke);
+            redraw();
+            break;
+          case 'stroke-update':
+            const idx = strokes.findIndex(s => s.id === msg.id);
+            if (idx !== -1) {
+              strokes[idx].points = msg.points;
+              redraw();
+            }
+            break;
+          case 'undo':
+            strokes.pop();
+            redraw();
+            break;
+          case 'clear':
+            if (msg.fade) fadeAndClear();
+            else { strokes = []; redraw(); }
+            break;
+          case 'spotlight':
+            if (msg.active && !hidden) {
+              spotlightEl.style.display = 'block';
+              spotlightEl.style.left = (msg.x * 100) + '%';
+              spotlightEl.style.top = (msg.y * 100) + '%';
+            } else {
+              spotlightEl.style.display = 'none';
+            }
+            break;
+        }
+      };
+
+      ws.onclose = () => {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectWS, 2000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    connectWS();
+  </script>
+</body>
+</html>

@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telestrator Settings</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #111;
+      color: #eee;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 40px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    .subtitle { color: #888; margin-bottom: 32px; font-size: 14px; }
+    h2 { font-size: 16px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; margin-top: 32px; }
+
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    label { display: block; font-size: 14px; color: #aaa; margin-bottom: 6px; }
+
+    select, input {
+      width: 100%;
+      padding: 10px 14px;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 8px;
+      color: #eee;
+      font-size: 15px;
+      margin-bottom: 12px;
+    }
+    select:focus, input:focus { outline: none; border-color: #666; }
+
+    button {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    button:active { transform: scale(0.97); }
+
+    .btn-primary { background: #2ecc71; color: #000; }
+    .btn-primary:hover { background: #27ae60; }
+    .btn-danger { background: #e74c3c; color: #fff; }
+    .btn-danger:hover { background: #c0392b; }
+    .btn-secondary { background: #444; color: #fff; }
+    .btn-secondary:hover { background: #555; }
+
+    .btn-row { display: flex; gap: 10px; margin-top: 4px; }
+
+    .status-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .status-badge.running { background: rgba(46,204,113,0.2); color: #2ecc71; }
+    .status-badge.stopped { background: rgba(231,76,60,0.2); color: #e74c3c; }
+
+    .url-list { margin-top: 24px; }
+    .url-item {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .url-label { color: #aaa; font-size: 13px; }
+    .url-value { color: #2ecc71; font-family: monospace; font-size: 14px; }
+
+    #log {
+      background: #0a0a0a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #888;
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Telestrator Settings</h1>
+  <p class="subtitle">Configure video capture from your ATEM switcher</p>
+
+  <h2>Video Capture</h2>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <span>Status</span>
+      <span class="status-badge stopped" id="capture-status">Stopped</span>
+    </div>
+    <label>Video Device</label>
+    <select id="device-select">
+      <option value="">Loading devices...</option>
+    </select>
+    <div class="btn-row">
+      <button class="btn-primary" id="btn-start">Start Capture</button>
+      <button class="btn-danger" id="btn-stop">Stop Capture</button>
+    </div>
+  </div>
+
+  <h2>Key Mode</h2>
+  <div class="card">
+    <label>Output background &mdash; match how the ATEM keys the telestrator source</label>
+    <select id="keymode-select">
+      <option value="luma">Luma key &mdash; black background</option>
+      <option value="chroma">Chroma key &mdash; green background</option>
+    </select>
+    <p style="color:#777;font-size:13px;margin-top:4px">
+      Luma: black drops out; avoid drawing in black/dark colors.
+      Chroma: green drops out; avoid drawing in green.
+    </p>
+  </div>
+
+  <h2>Test Video</h2>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <span>Status</span>
+      <span class="status-badge stopped" id="test-status">Off</span>
+    </div>
+    <label>YouTube URL (plays behind the drawing canvas on all screens)</label>
+    <input type="text" id="yt-url" value="https://www.youtube.com/watch?v=vgRuV7miGPI" placeholder="https://www.youtube.com/watch?v=...">
+    <div class="btn-row">
+      <button class="btn-primary" id="btn-test-start">Load Test Video</button>
+      <button class="btn-danger" id="btn-test-stop">Stop Test Video</button>
+    </div>
+    <p style="color:#777;font-size:13px;margin-top:12px">
+      Use this to try out telestration without the ATEM/capture card. Default is
+      The Freezers vs The Rippers &mdash; Captains' League 2: Golfball.
+      Play/pause/skip from the iPad toolbar.
+    </p>
+  </div>
+
+  <h2>URLs</h2>
+  <div class="url-list" id="urls"></div>
+
+  <h2>Companion / External Control</h2>
+  <div class="card" style="color:#aaa;font-size:14px;line-height:1.6">
+    <p>Any button controller that can send an HTTP request (e.g. <strong>Bitfocus Companion</strong> with the
+    <strong>Generic HTTP</strong> module) can control the telestrator. GET or POST both work:</p>
+    <div class="url-item" style="margin-top:12px">
+      <div>
+        <div class="url-label">Clear all drawings</div>
+        <div class="url-value" id="companion-clear"></div>
+      </div>
+    </div>
+    <div class="url-item">
+      <div>
+        <div class="url-label">Undo last stroke</div>
+        <div class="url-value" id="companion-undo"></div>
+      </div>
+    </div>
+    <div class="url-item">
+      <div>
+        <div class="url-label">Hide / show on-air drawings (toggle; also /api/hide, /api/show)</div>
+        <div class="url-value" id="companion-hide"></div>
+      </div>
+    </div>
+    <div class="url-item">
+      <div>
+        <div class="url-label">Arm / disarm auto-clear (toggle; ?seconds=N to set delay; also /on, /off)</div>
+        <div class="url-value" id="companion-autoclear"></div>
+      </div>
+    </div>
+    <div class="url-item">
+      <div>
+        <div class="url-label">Switch key mode (also /api/keymode/luma, /api/keymode/chroma)</div>
+        <div class="url-value" id="companion-keymode"></div>
+      </div>
+    </div>
+    <div class="url-item">
+      <div>
+        <div class="url-label">Status JSON (poll for button feedback: strokes, hidden, autoClear, keyMode)</div>
+        <div class="url-value" id="companion-status"></div>
+      </div>
+    </div>
+    <p style="margin-top:12px">In Companion: add a <strong>Generic HTTP</strong> connection, then give a button the
+    <strong>GET</strong> action with a URL above. Clear fades out over ~1s. Auto-clear wipes the screen
+    N seconds after the last stroke &mdash; the safety net for when the commentator forgets.</p>
+  </div>
+
+  <h2>Instructions</h2>
+  <div class="card" style="color:#aaa;font-size:14px;line-height:1.6">
+    <p><strong>1.</strong> Connect your ATEM program output to the Mac Mini's capture card.</p>
+    <p><strong>2.</strong> Select the capture device above and click Start Capture.</p>
+    <p><strong>3.</strong> Open the <strong>Draw</strong> URL on your iPad to start telestrating.</p>
+    <p><strong>4.</strong> Open the <strong>Output</strong> URL fullscreen on this Mac Mini (F11 or Cmd+Shift+F in Chrome).</p>
+    <p><strong>5.</strong> Route this Mac Mini's HDMI output back to the ATEM as a source.</p>
+    <p><strong>6.</strong> On the ATEM, set up a <strong>luma key</strong> on the telestrator source (black background drops out), then use it as a downstream key over your program.</p>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    const deviceSelect = document.getElementById('device-select');
+    const captureStatus = document.getElementById('capture-status');
+    const urlsDiv = document.getElementById('urls');
+    const logDiv = document.getElementById('log');
+
+    const baseUrl = `${location.protocol}//${location.host}`;
+
+    function showUrls() {
+      urlsDiv.innerHTML = `
+        <div class="url-item">
+          <div>
+            <div class="url-label">iPad (Draw)</div>
+            <div class="url-value">${baseUrl}</div>
+          </div>
+        </div>
+        <div class="url-item">
+          <div>
+            <div class="url-label">Output (ATEM)</div>
+            <div class="url-value">${baseUrl}/output.html</div>
+          </div>
+        </div>
+      `;
+    }
+    showUrls();
+    document.getElementById('companion-clear').textContent = `${baseUrl}/api/clear`;
+    document.getElementById('companion-undo').textContent = `${baseUrl}/api/undo`;
+    document.getElementById('companion-hide').textContent = `${baseUrl}/api/hide/toggle`;
+    document.getElementById('companion-autoclear').textContent = `${baseUrl}/api/autoclear/toggle?seconds=15`;
+    document.getElementById('companion-keymode').textContent = `${baseUrl}/api/keymode/toggle`;
+    document.getElementById('companion-status').textContent = `${baseUrl}/api/status`;
+
+    async function loadDevices() {
+      try {
+        const res = await fetch('/api/devices');
+        const data = await res.json();
+        deviceSelect.innerHTML = '';
+        if (data.devices.length === 0) {
+          deviceSelect.innerHTML = '<option value="0">Default (index 0)</option>';
+          addLog('No devices detected (ffmpeg not available or not macOS). Using default index 0.');
+        } else {
+          data.devices.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.index;
+            opt.textContent = `[${d.index}] ${d.name}`;
+            deviceSelect.appendChild(opt);
+          });
+        }
+        if (data.current !== null) {
+          deviceSelect.value = data.current;
+          captureStatus.textContent = 'Running';
+          captureStatus.className = 'status-badge running';
+        }
+      } catch (e) {
+        addLog('Error loading devices: ' + e.message);
+      }
+    }
+
+    document.getElementById('btn-start').addEventListener('click', async () => {
+      const device = deviceSelect.value;
+      addLog(`Starting capture on device ${device}...`);
+      try {
+        const res = await fetch('/api/capture/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          captureStatus.textContent = 'Running';
+          captureStatus.className = 'status-badge running';
+          addLog('Capture started.');
+        }
+      } catch (e) {
+        addLog('Error: ' + e.message);
+      }
+    });
+
+    document.getElementById('btn-stop').addEventListener('click', async () => {
+      try {
+        await fetch('/api/capture/stop', { method: 'POST' });
+        captureStatus.textContent = 'Stopped';
+        captureStatus.className = 'status-badge stopped';
+        addLog('Capture stopped.');
+      } catch (e) {
+        addLog('Error: ' + e.message);
+      }
+    });
+
+    function addLog(msg) {
+      const ts = new Date().toLocaleTimeString();
+      logDiv.textContent += `[${ts}] ${msg}\n`;
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    loadDevices();
+
+    // --- Test video control (via WebSocket) ---
+    const testStatus = document.getElementById('test-status');
+    let ws;
+    let reconnectTimer = null;
+
+    function connectWS() {
+      if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}?role=settings`);
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'state' || msg.type === 'test-video') {
+          updateTestStatus(msg.testVideo);
+        }
+        if (msg.type === 'state' && msg.keyMode) {
+          document.getElementById('keymode-select').value = msg.keyMode;
+        }
+        if (msg.type === 'keymode') {
+          document.getElementById('keymode-select').value = msg.keyMode;
+        }
+      };
+      ws.onclose = () => {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectWS, 2000);
+      };
+      ws.onerror = () => ws.close();
+    }
+    connectWS();
+
+    function updateTestStatus(tv) {
+      if (tv && tv.videoId) {
+        testStatus.textContent = 'Playing: ' + tv.videoId;
+        testStatus.className = 'status-badge running';
+      } else {
+        testStatus.textContent = 'Off';
+        testStatus.className = 'status-badge stopped';
+      }
+    }
+
+    function parseVideoId(url) {
+      const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/live\/)([\w-]{11})/)
+        || url.match(/^([\w-]{11})$/);
+      return m ? m[1] : null;
+    }
+
+    document.getElementById('btn-test-start').addEventListener('click', () => {
+      const url = document.getElementById('yt-url').value.trim();
+      const videoId = parseVideoId(url);
+      if (!videoId) {
+        addLog('Could not parse a YouTube video ID from that URL.');
+        return;
+      }
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'test-video', videoId }));
+        addLog(`Test video loaded: ${videoId}`);
+      } else {
+        addLog('Not connected to server.');
+      }
+    });
+
+    document.getElementById('keymode-select').addEventListener('change', (e) => {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'keymode', mode: e.target.value }));
+        addLog(`Key mode: ${e.target.value}`);
+      }
+    });
+
+    document.getElementById('btn-test-stop').addEventListener('click', () => {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'test-video', videoId: null }));
+        addLog('Test video stopped.');
+      }
+    });
+  </script>
+</body>
+</html>

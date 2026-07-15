@@ -1,0 +1,41 @@
+name: Build installers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Build .dmg
+        run: npx electron-builder --mac --publish never
+      - name: Upload dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telestrator-mac
+          path: dist/*.dmg
+
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Build installer
+        run: npx electron-builder --win --publish never
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telestrator-win
+          path: dist/*.exe
