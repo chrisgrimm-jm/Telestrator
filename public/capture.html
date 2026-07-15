@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Telestrator Capture</title>
+</head>
+<body>
+  <!-- Hidden window: captures the selected camera via getUserMedia and
+       streams JPEG frames to the server over WebSocket -->
+  <script>
+    const FPS = 20;
+    const JPEG_QUALITY = 0.7;
+
+    let ws = null;
+    let reconnectTimer = null;
+    let stream = null;
+    let frameTimer = null;
+
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    function connectWS() {
+      if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+      ws = new WebSocket(`ws://${location.host}?role=capture`);
+      ws.onopen = reportDevices;
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'capture-start') startCapture(msg.deviceId);
+        if (msg.type === 'capture-stop') stopCapture();
+      };
+      ws.onclose = () => {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectWS, 2000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    function send(obj) {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+    }
+
+    async function reportDevices() {
+      // Prime permission once so device labels are available
+      try {
+        const tmp = await navigator.mediaDevices.getUserMedia({ video: true });
+        tmp.getTracks().forEach(t => t.stop());
+      } catch (e) { /* no camera or permission denied; still report what we can */ }
+      try {
+        const devs = (await navigator.mediaDevices.enumerateDevices())
+          .filter(d => d.kind === 'videoinput')
+          .map((d, i) => ({ index: d.deviceId, name: d.label || `Camera ${i + 1}` }));
+        send({ type: 'capture-devices', devices: devs });
+      } catch (e) {
+        send({ type: 'capture-devices', devices: [] });
+      }
+    }
+
+    navigator.mediaDevices.ondevicechange = reportDevices;
+
+    async function startCapture(deviceId) {
+      stopCapture(true);
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 }
+          }
+        });
+        video.srcObject = stream;
+        await video.play();
+
+        // Stream at preview resolution: plenty for the iPad, light on Wi-Fi
+        canvas.width = 1280;
+        canvas.height = 720;
+
+        frameTimer = setInterval(() => {
+          if (video.readyState < 2) return;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            if (blob && ws && ws.readyState === 1) {
+              blob.arrayBuffer().then(ab => ws.send(ab));
+            }
+          }, 'image/jpeg', JPEG_QUALITY);
+        }, 1000 / FPS);
+
+        send({ type: 'capture-state', current: deviceId });
+      } catch (e) {
+        send({ type: 'capture-error', message: e.message });
+        send({ type: 'capture-state', current: null });
+      }
+    }
+
+    function stopCapture(silent) {
+      clearInterval(frameTimer);
+      frameTimer = null;
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+      if (!silent) send({ type: 'capture-state', current: null });
+    }
+
+    connectWS();
+  </script>
+</body>
+</html>

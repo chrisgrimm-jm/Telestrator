@@ -1,8 +1,9 @@
-const { app, BrowserWindow, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, session, systemPreferences } = require('electron');
 const os = require('os');
 
 let outputWindow = null;
 let settingsWindow = null;
+let captureWindow = null;
 
 const PORT = process.env.PORT || 3000;
 
@@ -18,6 +19,17 @@ function getLocalIP() {
   return 'localhost';
 }
 
+// Invisible window that captures the camera (getUserMedia sees UVC devices
+// and virtual cameras like OBS) and streams frames to the embedded server
+function createCaptureWindow() {
+  captureWindow = new BrowserWindow({
+    show: false,
+    webPreferences: { backgroundThrottling: false }
+  });
+  captureWindow.loadURL(`http://localhost:${PORT}/capture.html`);
+  captureWindow.on('closed', () => { captureWindow = null; });
+}
+
 function createOutputWindow() {
   outputWindow = new BrowserWindow({
     fullscreen: true,
@@ -26,7 +38,11 @@ function createOutputWindow() {
     webPreferences: { backgroundThrottling: false }
   });
   outputWindow.loadURL(`http://localhost:${PORT}/output.html`);
-  outputWindow.on('closed', () => { outputWindow = null; });
+  outputWindow.on('closed', () => {
+    outputWindow = null;
+    // The hidden capture window would otherwise keep the app alive
+    if (process.platform !== 'darwin') app.quit();
+  });
 }
 
 function openSettingsWindow() {
@@ -85,13 +101,24 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Start the embedded web/WebSocket server (it listens on module load)
   require('./server.js');
 
+  // Camera access: prompt macOS properly, and auto-grant our own pages
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
+    callback(permission === 'media');
+  });
+  if (process.platform === 'darwin') {
+    try { await systemPreferences.askForMediaAccess('camera'); } catch (e) {}
+  }
+
   buildMenu();
   // Give the server a beat to bind before loading from it
-  setTimeout(createOutputWindow, 300);
+  setTimeout(() => {
+    createOutputWindow();
+    createCaptureWindow();
+  }, 300);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createOutputWindow();

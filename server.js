@@ -46,6 +46,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 let strokes = [];
 let currentVideoDevice = null;
 let ffmpegProcess = null;
+let captureWs = null;      // Electron hidden window doing getUserMedia capture
+let captureDevices = [];   // devices reported by the Electron capture window
+let mjpegClients = [];     // open /video/stream responses
 let testVideo = null; // { videoId } when test video mode is active
 let hidden = false;   // TD has pulled drawings off the output
 let autoClear = { enabled: false, seconds: 15 };
@@ -71,9 +74,18 @@ wss.on('connection', (ws, req) => {
 
   console.log(`Client connected: ${role}`);
 
+  if (role === 'capture') {
+    captureWs = ws;
+  }
+
   ws.send(JSON.stringify({ type: 'state', strokes, testVideo, hidden, autoClear, keyMode }));
 
-  ws.on('message', (data) => {
+  ws.on('message', (data, isBinary) => {
+    if (isBinary) {
+      // JPEG frame from the Electron capture window
+      if (ws === captureWs) distributeFrame(data);
+      return;
+    }
     try {
       const msg = JSON.parse(data);
       handleMessage(msg, ws);
@@ -84,6 +96,11 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     console.log(`Client disconnected: ${role}`);
+    if (ws === captureWs) {
+      captureWs = null;
+      captureDevices = [];
+      currentVideoDevice = null;
+    }
   });
 });
 
@@ -133,6 +150,20 @@ function handleMessage(msg, sender) {
     case 'video-control':
       // play / pause / seek commands from the drawing page -> relay to outputs
       broadcast({ type: 'video-control', action: msg.action, time: msg.time, playing: msg.playing }, sender);
+      break;
+
+    // --- Messages from the Electron capture window ---
+    case 'capture-devices':
+      captureDevices = msg.devices || [];
+      console.log(`[capture] devices: ${captureDevices.map(d => d.name).join(', ') || '(none)'}`);
+      break;
+
+    case 'capture-state':
+      currentVideoDevice = msg.current;
+      break;
+
+    case 'capture-error':
+      console.error('[capture] error:', msg.message);
       break;
   }
 }
@@ -222,27 +253,75 @@ function buildCaptureArgs(deviceIndex) {
   ];
 }
 
+// Write a JPEG frame to every open /video/stream response
+function distributeFrame(frame) {
+  for (let i = mjpegClients.length - 1; i >= 0; i--) {
+    const res = mjpegClients[i];
+    try {
+      res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`);
+      res.write(frame);
+      res.write('\r\n');
+    } catch (e) {
+      mjpegClients.splice(i, 1);
+    }
+  }
+}
+
+function captureActive() {
+  return (captureWs && currentVideoDevice !== null) || ffmpegProcess !== null;
+}
+
 app.get('/api/devices', async (req, res) => {
+  // Electron capture window (getUserMedia) is the primary source — it sees
+  // UVC cameras AND virtual cameras (OBS etc.). ffmpeg is the headless fallback.
+  if (captureWs) {
+    res.json({ devices: captureDevices, current: currentVideoDevice });
+    return;
+  }
   const devices = await listVideoDevices();
   res.json({ devices, current: currentVideoDevice });
 });
 
 app.post('/api/capture/start', express.json(), (req, res) => {
-  const deviceIndex = req.body.device || '0';
+  const device = req.body.device;
 
+  if (captureWs) {
+    currentVideoDevice = device;
+    captureWs.send(JSON.stringify({ type: 'capture-start', deviceId: device }));
+    res.json({ ok: true, device, via: 'electron' });
+    return;
+  }
+
+  // Headless fallback: ffmpeg
   if (ffmpegProcess) {
     ffmpegProcess.kill('SIGTERM');
     ffmpegProcess = null;
   }
 
-  currentVideoDevice = deviceIndex;
+  currentVideoDevice = device || '0';
 
-  ffmpegProcess = spawn(FFMPEG, buildCaptureArgs(deviceIndex), { stdio: ['pipe', 'pipe', 'pipe'] });
+  ffmpegProcess = spawn(FFMPEG, buildCaptureArgs(currentVideoDevice), { stdio: ['pipe', 'pipe', 'pipe'] });
 
   ffmpegProcess.on('error', (err) => {
     console.error('ffmpeg failed to start (is it installed?):', err.message);
     ffmpegProcess = null;
     currentVideoDevice = null;
+  });
+
+  // Parse MJPEG stream from ffmpeg stdout into individual frames
+  let buffer = Buffer.alloc(0);
+  const SOI = Buffer.from([0xff, 0xd8]);
+  const EOI = Buffer.from([0xff, 0xd9]);
+  ffmpegProcess.stdout.on('data', (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    while (true) {
+      const soiIdx = buffer.indexOf(SOI);
+      const eoiIdx = buffer.indexOf(EOI, soiIdx);
+      if (soiIdx === -1 || eoiIdx === -1) break;
+      const frame = buffer.subarray(soiIdx, eoiIdx + 2);
+      buffer = buffer.subarray(eoiIdx + 2);
+      distributeFrame(frame);
+    }
   });
 
   ffmpegProcess.stderr.on('data', (d) => {
@@ -258,21 +337,25 @@ app.post('/api/capture/start', express.json(), (req, res) => {
     currentVideoDevice = null;
   });
 
-  res.json({ ok: true, device: deviceIndex });
+  res.json({ ok: true, device: currentVideoDevice, via: 'ffmpeg' });
 });
 
 app.post('/api/capture/stop', (req, res) => {
+  if (captureWs) {
+    captureWs.send(JSON.stringify({ type: 'capture-stop' }));
+  }
   if (ffmpegProcess) {
     ffmpegProcess.kill('SIGTERM');
     ffmpegProcess = null;
-    currentVideoDevice = null;
   }
+  currentVideoDevice = null;
   res.json({ ok: true });
 });
 
-// MJPEG stream endpoint - serves raw JPEG frames from ffmpeg
+// MJPEG stream endpoint — frames come from the Electron capture window
+// (or ffmpeg in headless mode) via distributeFrame()
 app.get('/video/stream', (req, res) => {
-  if (!ffmpegProcess) {
+  if (!captureActive()) {
     res.status(503).send('No capture running. Start capture first.');
     return;
   }
@@ -283,43 +366,11 @@ app.get('/video/stream', (req, res) => {
     'Connection': 'keep-alive'
   });
 
-  let buffer = Buffer.alloc(0);
-  const SOI = Buffer.from([0xff, 0xd8]);
-  const EOI = Buffer.from([0xff, 0xd9]);
-
-  function onData(chunk) {
-    buffer = Buffer.concat([buffer, chunk]);
-
-    while (true) {
-      const soiIdx = buffer.indexOf(SOI);
-      const eoiIdx = buffer.indexOf(EOI, soiIdx);
-      if (soiIdx === -1 || eoiIdx === -1) break;
-
-      const frame = buffer.subarray(soiIdx, eoiIdx + 2);
-      buffer = buffer.subarray(eoiIdx + 2);
-
-      try {
-        res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`);
-        res.write(frame);
-        res.write('\r\n');
-      } catch (e) {
-        cleanup();
-        return;
-      }
-    }
-  }
-
-  function cleanup() {
-    if (ffmpegProcess && ffmpegProcess.stdout) {
-      ffmpegProcess.stdout.removeListener('data', onData);
-    }
-  }
-
-  if (ffmpegProcess && ffmpegProcess.stdout) {
-    ffmpegProcess.stdout.on('data', onData);
-  }
-
-  req.on('close', cleanup);
+  mjpegClients.push(res);
+  req.on('close', () => {
+    const i = mjpegClients.indexOf(res);
+    if (i !== -1) mjpegClients.splice(i, 1);
+  });
 });
 
 // --- Companion / external control (Bitfocus Companion "Generic HTTP") ---
@@ -378,7 +429,7 @@ app.get('/api/status', (req, res) => {
     hidden,
     autoClear,
     keyMode,
-    capturing: currentVideoDevice !== null,
+    capturing: captureActive(),
     testVideo: testVideo ? testVideo.videoId : null,
     clients: wss.clients.size
   });
