@@ -31,8 +31,13 @@
     "mac": {
       "target": "dmg",
       "category": "public.app-category.utilities",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSCameraUsageDescription": "Telestrator needs camera access to read the capture card feed from the ATEM switcher."
+        "NSCameraUsageDescription": "Telestrator needs camera access to read the capture card feed from the ATEM switcher.",
+        "NSMicrophoneUsageDescription": "Telestrator does not record audio; this is required alongside camera access."
       }
     },
     "win": {

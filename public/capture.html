@@ -44,19 +44,42 @@
       if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
     }
 
+    async function permissionState() {
+      try {
+        const s = await navigator.permissions.query({ name: 'camera' });
+        return s.state;
+      } catch (e) {
+        return 'unqueryable';
+      }
+    }
+
     async function reportDevices() {
+      let primeError = null;
       // Prime permission once so device labels are available
       try {
         const tmp = await navigator.mediaDevices.getUserMedia({ video: true });
         tmp.getTracks().forEach(t => t.stop());
-      } catch (e) { /* no camera or permission denied; still report what we can */ }
+      } catch (e) {
+        primeError = `${e.name}: ${e.message}`;
+      }
+      const permission = await permissionState();
       try {
         const devs = (await navigator.mediaDevices.enumerateDevices())
           .filter(d => d.kind === 'videoinput')
           .map((d, i) => ({ index: d.deviceId, name: d.label || `Camera ${i + 1}` }));
-        send({ type: 'capture-devices', devices: devs });
+        send({
+          type: 'capture-devices',
+          devices: devs,
+          permission,
+          error: devs.length === 0 ? (primeError || 'No video input devices found') : null
+        });
       } catch (e) {
-        send({ type: 'capture-devices', devices: [] });
+        send({
+          type: 'capture-devices',
+          devices: [],
+          permission,
+          error: `enumerateDevices failed — ${e.name}: ${e.message}`
+        });
       }
     }
 
@@ -92,7 +115,11 @@
 
         send({ type: 'capture-state', current: deviceId });
       } catch (e) {
-        send({ type: 'capture-error', message: e.message });
+        send({
+          type: 'capture-error',
+          message: `${e.name}: ${e.message}`,
+          permission: await permissionState()
+        });
         send({ type: 'capture-state', current: null });
       }
     }

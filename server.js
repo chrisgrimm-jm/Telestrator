@@ -34,6 +34,12 @@ function findFfmpeg() {
 }
 const FFMPEG = findFfmpeg();
 
+// Shown in Settings so we can confirm which build is actually installed
+const APP_VERSION = (() => {
+  try { return require('./package.json').version; } catch (e) { return '?'; }
+})();
+const BUILD_ID = 'capture-engine-2';
+
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -48,6 +54,8 @@ let currentVideoDevice = null;
 let ffmpegProcess = null;
 let captureWs = null;      // Electron hidden window doing getUserMedia capture
 let captureDevices = [];   // devices reported by the Electron capture window
+let captureError = null;   // last capture failure, surfaced in Settings UI
+let capturePermission = 'unknown'; // camera permission as seen by the capture window
 let mjpegClients = [];     // open /video/stream responses
 let testVideo = null; // { videoId } when test video mode is active
 let hidden = false;   // TD has pulled drawings off the output
@@ -155,15 +163,24 @@ function handleMessage(msg, sender) {
     // --- Messages from the Electron capture window ---
     case 'capture-devices':
       captureDevices = msg.devices || [];
+      if (msg.permission) capturePermission = msg.permission;
+      if (msg.error) captureError = msg.error;
+      else if (captureDevices.length) captureError = null;
       console.log(`[capture] devices: ${captureDevices.map(d => d.name).join(', ') || '(none)'}`);
+      broadcast({ type: 'capture-info', ...captureInfo() });
       break;
 
     case 'capture-state':
       currentVideoDevice = msg.current;
+      if (msg.current) captureError = null;
+      broadcast({ type: 'capture-info', ...captureInfo() });
       break;
 
     case 'capture-error':
+      captureError = msg.message;
+      if (msg.permission) capturePermission = msg.permission;
       console.error('[capture] error:', msg.message);
+      broadcast({ type: 'capture-info', ...captureInfo() });
       break;
   }
 }
@@ -270,6 +287,28 @@ function distributeFrame(frame) {
 function captureActive() {
   return (captureWs && currentVideoDevice !== null) || ffmpegProcess !== null;
 }
+
+// Everything needed to diagnose a "no video" problem without a terminal
+function captureInfo() {
+  return {
+    engine: captureWs ? 'electron' : 'ffmpeg-fallback',
+    captureWindowConnected: captureWs !== null,
+    cameraPermission: capturePermission,
+    deviceCount: captureWs ? captureDevices.length : null,
+    devices: captureWs ? captureDevices.map(d => d.name) : null,
+    currentDevice: currentVideoDevice,
+    capturing: captureActive(),
+    streamViewers: mjpegClients.length,
+    lastError: captureError,
+    platform: `${os.platform()} ${os.arch()}`,
+    ffmpegPath: FFMPEG,
+    ffmpegExists: (() => { try { return fs.existsSync(FFMPEG); } catch (e) { return false; } })(),
+    appVersion: APP_VERSION,
+    buildId: BUILD_ID
+  };
+}
+
+app.get('/api/diagnostics', (req, res) => res.json(captureInfo()));
 
 app.get('/api/devices', async (req, res) => {
   // Electron capture window (getUserMedia) is the primary source — it sees

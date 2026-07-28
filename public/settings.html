@@ -119,6 +119,16 @@
     </div>
   </div>
 
+  <h2>Diagnostics</h2>
+  <div class="card">
+    <div id="diag-banner" style="padding:12px 14px;border-radius:8px;font-weight:600;margin-bottom:14px">Checking…</div>
+    <pre id="diag-body" style="background:#111;color:#bbb;padding:12px;border-radius:8px;font-size:12px;line-height:1.6;overflow-x:auto;margin:0">loading…</pre>
+    <div class="btn-row">
+      <button class="btn-primary" id="btn-diag-copy">Copy Diagnostics</button>
+      <button id="btn-diag-refresh">Refresh</button>
+    </div>
+  </div>
+
   <h2>Key Mode</h2>
   <div class="card">
     <label>Output background &mdash; match how the ATEM keys the telestrator source</label>
@@ -307,6 +317,76 @@
     }
 
     loadDevices();
+
+    // --- Diagnostics ---
+    let lastDiag = null;
+
+    function renderDiag(d) {
+      lastDiag = d;
+      const banner = document.getElementById('diag-banner');
+      let msg, bg;
+      if (!d.captureWindowConnected) {
+        msg = 'Capture engine NOT running — falling back to ffmpeg. Device list will be limited.';
+        bg = '#7d2b2b';
+      } else if (d.cameraPermission === 'denied') {
+        msg = 'Camera permission DENIED by macOS. Enable Telestrator under System Settings → Privacy & Security → Camera.';
+        bg = '#7d2b2b';
+      } else if (d.deviceCount === 0) {
+        msg = 'Capture engine running, but macOS reports NO cameras. Check the USB connection / try OBS Virtual Camera.';
+        bg = '#7d5a2b';
+      } else if (d.capturing) {
+        msg = `Capturing — ${d.streamViewers} stream viewer(s). Video should be visible on the iPad.`;
+        bg = '#2b5c37';
+      } else {
+        msg = `Ready — ${d.deviceCount} camera(s) found. Pick one above and press Start Capture.`;
+        bg = '#2b4a5c';
+      }
+      banner.textContent = msg;
+      banner.style.background = bg;
+      banner.style.color = '#fff';
+
+      const lines = [
+        `App version:        ${d.appVersion}  (build: ${d.buildId})`,
+        `Platform:           ${d.platform}`,
+        `Capture engine:     ${d.engine}`,
+        `Capture window:     ${d.captureWindowConnected ? 'connected' : 'NOT CONNECTED'}`,
+        `Camera permission:  ${d.cameraPermission}`,
+        `Cameras found:      ${d.deviceCount === null ? 'n/a (ffmpeg mode)' : d.deviceCount}`,
+        ...(d.devices || []).map((n, i) => `   [${i}] ${n}`),
+        `Currently capturing: ${d.capturing ? 'yes' : 'no'}`,
+        `Stream viewers:     ${d.streamViewers}`,
+        `Bundled ffmpeg:     ${d.ffmpegExists ? 'found' : 'MISSING'} (${d.ffmpegPath})`,
+        `Last error:         ${d.lastError || 'none'}`
+      ];
+      document.getElementById('diag-body').textContent = lines.join('\n');
+    }
+
+    async function refreshDiag() {
+      try {
+        const res = await fetch('/api/diagnostics');
+        renderDiag(await res.json());
+      } catch (e) {
+        document.getElementById('diag-body').textContent = 'Could not reach the server: ' + e.message;
+      }
+    }
+
+    document.getElementById('btn-diag-refresh').addEventListener('click', () => {
+      refreshDiag();
+      loadDevices();
+    });
+
+    document.getElementById('btn-diag-copy').addEventListener('click', async () => {
+      const text = document.getElementById('diag-body').textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        addLog('Diagnostics copied to clipboard.');
+      } catch (e) {
+        addLog('Copy failed — select the text above manually.');
+      }
+    });
+
+    refreshDiag();
+    setInterval(refreshDiag, 4000);
 
     // --- Test video control (via WebSocket) ---
     const testStatus = document.getElementById('test-status');
