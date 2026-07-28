@@ -10,14 +10,6 @@ jobs:
   # cross-build because nothing architecture-specific is bundled anymore
   # (capture uses Electron's own camera engine, not an ffmpeg binary).
   build-mac:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - flag: universal
-            label: universal
-          - flag: arm64
-            label: apple-silicon
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +18,9 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      # Plainest possible invocation: native arch of the runner, no extra flags
       - name: Build app
-        run: npx electron-builder --mac --${{ matrix.flag }} --publish never
+        run: npx electron-builder --mac --publish never
       - name: List build output
         if: always()
         run: ls -la dist/ || true
@@ -35,7 +28,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Telestrator-mac-${{ matrix.label }}
+          name: Telestrator-mac
           path: |
             dist/*.dmg
             dist/*.zip
