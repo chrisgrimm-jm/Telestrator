@@ -6,20 +6,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Native runner per architecture — no cross-compiling, so the bundled
-  # ffmpeg binary always matches the app's architecture.
+  # One build that runs on both Intel and Apple Silicon Macs. Safe to
+  # cross-build because nothing architecture-specific is bundled anymore
+  # (capture uses Electron's own camera engine, not an ffmpeg binary).
   build-mac:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-13      # Intel
-            arch: x64
-            label: intel
-          - runner: macos-14      # Apple Silicon
-            arch: arm64
+          - flag: universal
+            label: universal
+          - flag: arm64
             label: apple-silicon
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,12 +26,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
-      - name: Show bundled ffmpeg architecture
-        run: |
-          node -e "console.log('ffmpeg path:', require('ffmpeg-static'))"
-          file "$(node -e "process.stdout.write(require('ffmpeg-static'))")" || true
       - name: Build app
-        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
+        run: npx electron-builder --mac --${{ matrix.flag }} --publish never
       - name: List build output
         if: always()
         run: ls -la dist/ || true

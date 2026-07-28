@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "express": "^4.21.0",
-    "ffmpeg-static": "^5.2.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -24,9 +23,6 @@
       "main.js",
       "server.js",
       "public/**/*"
-    ],
-    "asarUnpack": [
-      "node_modules/ffmpeg-static/**"
     ],
     "mac": {
       "target": [
