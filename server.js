@@ -310,6 +310,18 @@ function captureInfo() {
 
 app.get('/api/diagnostics', (req, res) => res.json(captureInfo()));
 
+// Force the capture window to re-enumerate cameras (e.g. after quitting OBS
+// or granting camera permission) — Refresh alone only re-read a cached list.
+app.post('/api/devices/rescan', (req, res) => {
+  if (!captureWs) {
+    res.json({ ok: false, reason: 'capture window not connected' });
+    return;
+  }
+  captureError = null;
+  captureWs.send(JSON.stringify({ type: 'capture-rescan' }));
+  res.json({ ok: true });
+});
+
 app.get('/api/devices', async (req, res) => {
   // Electron capture window (getUserMedia) is the primary source — it sees
   // UVC cameras AND virtual cameras (OBS etc.). ffmpeg is the headless fallback.

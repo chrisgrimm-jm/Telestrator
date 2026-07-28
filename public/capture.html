@@ -32,6 +32,7 @@
         const msg = JSON.parse(e.data);
         if (msg.type === 'capture-start') startCapture(msg.deviceId);
         if (msg.type === 'capture-stop') stopCapture();
+        if (msg.type === 'capture-rescan') reportDevices();
       };
       ws.onclose = () => {
         clearTimeout(reconnectTimer);
@@ -42,6 +43,26 @@
 
     function send(obj) {
       if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+    }
+
+    // Turn a getUserMedia DOMException into something actionable
+    function explainError(e) {
+      const detail = `${e.name}: ${e.message}`;
+      switch (e.name) {
+        case 'NotReadableError':
+        case 'TrackStartError':
+          return `Device is in use by another app — quit OBS (or any app using it) and rescan. [${detail}]`;
+        case 'NotAllowedError':
+        case 'SecurityError':
+          return `Camera access blocked by macOS — System Settings > Privacy & Security > Camera. [${detail}]`;
+        case 'NotFoundError':
+        case 'DevicesNotFoundError':
+          return `That device is no longer connected. [${detail}]`;
+        case 'OverconstrainedError':
+          return `Device does not support the requested format, or it disappeared. [${detail}]`;
+        default:
+          return detail;
+      }
     }
 
     async function permissionState() {
@@ -117,7 +138,7 @@
       } catch (e) {
         send({
           type: 'capture-error',
-          message: `${e.name}: ${e.message}`,
+          message: explainError(e),
           permission: await permissionState()
         });
         send({ type: 'capture-state', current: null });

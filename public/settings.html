@@ -125,7 +125,7 @@
     <pre id="diag-body" style="background:#111;color:#bbb;padding:12px;border-radius:8px;font-size:12px;line-height:1.6;overflow-x:auto;margin:0">loading…</pre>
     <div class="btn-row">
       <button class="btn-primary" id="btn-diag-copy">Copy Diagnostics</button>
-      <button id="btn-diag-refresh">Refresh</button>
+      <button id="btn-diag-refresh">Rescan Cameras</button>
     </div>
   </div>
 
@@ -370,9 +370,17 @@
       }
     }
 
-    document.getElementById('btn-diag-refresh').addEventListener('click', () => {
-      refreshDiag();
-      loadDevices();
+    document.getElementById('btn-diag-refresh').addEventListener('click', async () => {
+      addLog('Rescanning cameras…');
+      try {
+        const r = await fetch('/api/devices/rescan', { method: 'POST' });
+        const j = await r.json();
+        if (!j.ok) addLog(`Rescan unavailable: ${j.reason}`);
+      } catch (e) {
+        addLog('Rescan request failed: ' + e.message);
+      }
+      // Give the capture window a moment to re-enumerate
+      setTimeout(() => { refreshDiag(); loadDevices(); }, 1200);
     });
 
     document.getElementById('btn-diag-copy').addEventListener('click', async () => {
