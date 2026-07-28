@@ -8,8 +8,8 @@
   <!-- Hidden window: captures the selected camera via getUserMedia and
        streams JPEG frames to the server over WebSocket -->
   <script>
-    const FPS = 20;
-    const JPEG_QUALITY = 0.7;
+    const FPS = 30;          // match typical program framerate
+    const JPEG_QUALITY = 0.6; // smaller frames = less time on the wire
 
     let ws = null;
     let reconnectTimer = null;
@@ -124,12 +124,23 @@
         canvas.width = 1280;
         canvas.height = 720;
 
+        // Never queue a second encode/send: if we can't keep up, skip the
+        // frame rather than build a backlog the viewer would see as lag.
+        let inFlight = false;
         frameTimer = setInterval(() => {
-          if (video.readyState < 2) return;
+          if (video.readyState < 2 || inFlight) return;
+          if (!ws || ws.readyState !== 1) return;
+          // Socket already backed up — drop this frame
+          if (ws.bufferedAmount > 512 * 1024) return;
+          inFlight = true;
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob((blob) => {
-            if (blob && ws && ws.readyState === 1) {
-              blob.arrayBuffer().then(ab => ws.send(ab));
+          canvas.toBlob(async (blob) => {
+            try {
+              if (blob && ws && ws.readyState === 1) {
+                ws.send(await blob.arrayBuffer());
+              }
+            } finally {
+              inFlight = false;
             }
           }, 'image/jpeg', JPEG_QUALITY);
         }, 1000 / FPS);

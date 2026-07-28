@@ -270,10 +270,18 @@ function buildCaptureArgs(deviceIndex) {
   ];
 }
 
-// Write a JPEG frame to every open /video/stream response
+// Write a JPEG frame to every open /video/stream response.
+// Frames are dropped for any client whose socket is still draining — on a
+// live telestrator a fresh frame always beats a queued one, and without
+// this the preview falls progressively further behind on a slow link.
+let framesDropped = 0;
 function distributeFrame(frame) {
   for (let i = mjpegClients.length - 1; i >= 0; i--) {
     const res = mjpegClients[i];
+    if (res.writableNeedDrain) {
+      framesDropped++;
+      continue;
+    }
     try {
       res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`);
       res.write(frame);
@@ -299,6 +307,7 @@ function captureInfo() {
     currentDevice: currentVideoDevice,
     capturing: captureActive(),
     streamViewers: mjpegClients.length,
+    framesDropped,
     lastError: captureError,
     platform: `${os.platform()} ${os.arch()}`,
     ffmpegPath: FFMPEG,
