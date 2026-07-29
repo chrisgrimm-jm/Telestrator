@@ -33,6 +33,7 @@ jobs:
             dist/*.dmg
             dist/*.zip
           if-no-files-found: warn
+          retention-days: 7
 
   build-win:
     runs-on: windows-latest
@@ -52,3 +53,4 @@ jobs:
           name: Telestrator-win
           path: dist/*.exe
           if-no-files-found: warn
+          retention-days: 7
