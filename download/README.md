@@ -20,6 +20,19 @@ not code-signed. Click **More info → Run anyway**.
 Feed the output window's display into the ATEM and set up a **luma key** (black
 drops out). Green/chroma is selectable in Settings instead.
 
+## Hotkeys
+
+These work anywhere on the computer, even when Telestrator is not focused:
+
+| Key | Action |
+| --- | --- |
+| `Ctrl + Alt + C` | Clear drawings (fades out) |
+| `Ctrl + Alt + H` | Hide / show the output on air |
+| `Ctrl + Alt + Z` | Undo last stroke |
+
+`Ctrl + Alt + H` is the one to reach for mid-show: it pulls the telestration off
+air instantly but keeps the strokes, so the same press brings them back.
+
 ## Running from source
 
 If you would rather not install, the app can be run directly:

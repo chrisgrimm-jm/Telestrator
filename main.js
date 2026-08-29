@@ -1,5 +1,6 @@
-const { app, BrowserWindow, Menu, shell, dialog, session, systemPreferences } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, session, systemPreferences, globalShortcut } = require('electron');
 const os = require('os');
+const http = require('http');
 
 let outputWindow = null;
 let settingsWindow = null;
@@ -60,6 +61,31 @@ function openSettingsWindow() {
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
+// Fire one of the app's own control endpoints (same paths Companion uses)
+function control(path) {
+  const req = http.request(
+    { host: '127.0.0.1', port: PORT, path, method: 'POST' },
+    (res) => res.resume()
+  );
+  req.on('error', (e) => console.error('[hotkey] failed:', e.message));
+  req.end();
+}
+
+// Panic keys for whoever is sitting at the machine. Registered globally so
+// they work even when Telestrator is not the focused app.
+const HOTKEYS = [
+  { accel: 'CommandOrControl+Alt+C', path: '/api/clear',       label: 'Clear drawings' },
+  { accel: 'CommandOrControl+Alt+H', path: '/api/hide/toggle', label: 'Hide / show output' },
+  { accel: 'CommandOrControl+Alt+Z', path: '/api/undo',        label: 'Undo last stroke' }
+];
+
+function registerHotkeys() {
+  for (const hk of HOTKEYS) {
+    const ok = globalShortcut.register(hk.accel, () => control(hk.path));
+    console.log(`[hotkey] ${hk.accel} -> ${hk.label}: ${ok ? 'registered' : 'FAILED (in use by another app)'}`);
+  }
+}
+
 function buildMenu() {
   const ip = getLocalIP();
   const template = [
@@ -82,6 +108,27 @@ function buildMenu() {
               buttons: ['OK']
             });
           }
+        },
+        { type: 'separator' },
+        // Accelerators shown for discoverability only; globalShortcut does the
+        // actual work so these also fire when the app is not focused.
+        {
+          label: 'Clear Drawings',
+          accelerator: 'CommandOrControl+Alt+C',
+          registerAccelerator: false,
+          click: () => control('/api/clear')
+        },
+        {
+          label: 'Hide / Show Output',
+          accelerator: 'CommandOrControl+Alt+H',
+          registerAccelerator: false,
+          click: () => control('/api/hide/toggle')
+        },
+        {
+          label: 'Undo Last Stroke',
+          accelerator: 'CommandOrControl+Alt+Z',
+          registerAccelerator: false,
+          click: () => control('/api/undo')
         },
         { type: 'separator' },
         {
@@ -114,6 +161,7 @@ app.whenReady().then(async () => {
   }
 
   buildMenu();
+  registerHotkeys();
   // Give the server a beat to bind before loading from it
   setTimeout(() => {
     createOutputWindow();
@@ -123,6 +171,10 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createOutputWindow();
   });
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {
