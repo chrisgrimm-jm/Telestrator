@@ -69,7 +69,7 @@ function scheduleAutoClear() {
   autoClearTimer = setTimeout(() => {
     if (strokes.length > 0) {
       strokes = [];
-      broadcast({ type: 'clear', fade: true });
+      broadcast({ type: 'clear' });
       console.log('[auto-clear] cleared after inactivity');
     }
   }, autoClear.seconds * 1000);
@@ -136,7 +136,7 @@ function handleMessage(msg, sender) {
 
     case 'clear':
       strokes = [];
-      broadcast({ type: 'clear', fade: true }, sender);
+      broadcast({ type: 'clear' }, sender);
       break;
 
     case 'spotlight':
@@ -442,7 +442,7 @@ function companionEndpoint(path, handler) {
 
 companionEndpoint('/api/clear', () => {
   strokes = [];
-  broadcast({ type: 'clear', fade: true });
+  broadcast({ type: 'clear' });
   console.log('[companion] clear');
 });
 

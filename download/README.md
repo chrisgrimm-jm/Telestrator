@@ -26,7 +26,7 @@ These work anywhere on the computer, even when Telestrator is not focused:
 
 | Key | Action |
 | --- | --- |
-| `Ctrl + Alt + C` | Clear drawings (fades out) |
+| `Ctrl + Alt + C` | Clear drawings (instant cut) |
 | `Ctrl + Alt + H` | Hide / show the output on air |
 | `Ctrl + Alt + Z` | Undo last stroke |
 
