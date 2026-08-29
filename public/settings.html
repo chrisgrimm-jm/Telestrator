@@ -152,6 +152,35 @@
     </p>
   </div>
 
+  <h2>Frame Rate</h2>
+  <div class="card">
+    <label>Capture rate &mdash; what the iPad sees (costs CPU on this computer)</label>
+    <select id="capture-fps">
+      <option value="15">15 fps &mdash; lightest</option>
+      <option value="24">24 fps</option>
+      <option value="30" selected>30 fps &mdash; recommended</option>
+      <option value="60">60 fps &mdash; only if the source is 60</option>
+    </select>
+
+    <label style="margin-top:14px">Preview size &mdash; fewer pixels buys CPU headroom at 60 fps</label>
+    <select id="capture-size">
+      <option value="1280x720" selected>1280 x 720 &mdash; sharpest</option>
+      <option value="960x540">960 x 540 &mdash; good balance at 60 fps</option>
+      <option value="854x480">854 x 480 &mdash; lightest</option>
+    </select>
+
+    <label style="margin-top:14px">Watcher rate &mdash; costs bandwidth per viewer, no CPU</label>
+    <select id="watch-fps">
+      <option value="10">10 fps &mdash; lightest on Wi-Fi</option>
+      <option value="15">15 fps</option>
+      <option value="30" selected>30 fps &mdash; smoothest</option>
+    </select>
+
+    <p style="color:#777;font-size:13px;margin-top:12px" id="fps-note">
+      Neither can exceed what the camera itself delivers.
+    </p>
+  </div>
+
   <h2>Key Mode</h2>
   <div class="card">
     <label>Output background &mdash; match how the ATEM keys the telestrator source</label>
@@ -277,8 +306,8 @@
         </div>
         <div class="url-item">
           <div>
-            <div class="url-label">Watch only (view the feed, cannot draw)</div>
-            <div class="url-value">${baseUrl}/watch.html</div>
+            <div class="url-label">Watch only &mdash; give this out; it cannot draw</div>
+            <div class="url-value" id="watch-url">${baseUrl}/watch.html</div>
           </div>
         </div>
         <div class="url-item">
@@ -290,6 +319,13 @@
       `;
     }
     showUrls();
+    // The watch-only server runs on its own port
+    fetch('/api/status').then(r => r.json()).then(s => {
+      const el = document.getElementById('watch-url');
+      if (el && s.watchPort) {
+        el.textContent = `${location.protocol}//${location.hostname}:${s.watchPort}`;
+      }
+    }).catch(() => {});
     document.getElementById('companion-clear').textContent = `${baseUrl}/api/clear`;
     document.getElementById('companion-undo').textContent = `${baseUrl}/api/undo`;
     document.getElementById('companion-hide').textContent = `${baseUrl}/api/hide/toggle`;
@@ -398,6 +434,8 @@
         `Cameras found:      ${d.deviceCount === null ? 'n/a (ffmpeg mode)' : d.deviceCount}`,
         ...(d.devices || []).map((n, i) => `   [${i}] ${n}`),
         `Currently capturing: ${d.capturing ? 'yes' : 'no'}`,
+        `Source from camera: ${d.source ? `${d.source.width}x${d.source.height} @ ${d.source.frameRate} fps` : 'unknown'}`,
+        `Preview:            ${d.previewSize ? d.previewSize.width + 'x' + d.previewSize.height : '?'} @ ${d.previewFps} fps   (watchers ${d.watchFps} fps)`,
         `Stream viewers:     ${d.streamViewers}`,
         `Bundled ffmpeg:     ${d.ffmpegExists ? 'found' : 'MISSING'} (${d.ffmpegPath})`,
         `Last error:         ${d.lastError || 'none'}`
@@ -501,6 +539,23 @@
 
     refreshDisplays();
     setInterval(refreshDisplays, 3000);
+
+    // --- Frame rate ---
+    document.getElementById('capture-fps').addEventListener('change', async (e) => {
+      const r = await (await fetch(`/api/capture/fps?value=${e.target.value}`, { method: 'POST' })).json();
+      addLog(r.ok ? `Capture rate: ${r.fps} fps` : `Rejected: ${r.reason}`);
+      setTimeout(refreshDiag, 500);
+    });
+    document.getElementById('capture-size').addEventListener('change', async (e) => {
+      const [w, h] = e.target.value.split('x');
+      const r = await (await fetch(`/api/capture/size?width=${w}&height=${h}`, { method: 'POST' })).json();
+      addLog(r.ok ? `Preview size: ${r.width}x${r.height}` : `Rejected: ${r.reason}`);
+      setTimeout(refreshDiag, 500);
+    });
+    document.getElementById('watch-fps').addEventListener('change', async (e) => {
+      const r = await (await fetch(`/api/watch/fps?value=${e.target.value}`, { method: 'POST' })).json();
+      addLog(r.ok ? `Watcher rate: ${r.fps} fps (viewers reload to apply)` : `Rejected: ${r.reason}`);
+    });
 
     // --- Test video control (via WebSocket) ---
     const testStatus = document.getElementById('test-status');

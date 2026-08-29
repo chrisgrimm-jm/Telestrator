@@ -21,15 +21,31 @@ not code-signed. Click **More info → Run anyway**.
 
 ## Sharing the feed
 
-Give anyone on the network `http://<computer-ip>:3000` and they get a page with
-two choices:
+Watchers get their own port. Hand out:
 
-- **Telestrate** — the drawing page, for the commentator.
-- **Watch Only** — the feed plus the drawings, with no ability to draw.
+```
+http://<computer-ip>:3001
+```
 
-View-only is enforced by the server, not just hidden in the page, so a watcher
-cannot draw even with developer tools open. Watchers receive a 15 fps stream
-(about 0.6 Mbps each) while the person drawing gets the full 30 fps.
+That port serves the feed and nothing else — no drawing page, no settings, no
+control API, and its connections are read-only at the server. A watcher cannot
+change what is on air even with developer tools open.
+
+Port `3000` is the control side: it opens a page offering **Telestrate** or
+**Watch Only**, and hosts settings and the output.
+
+## Frame rate
+
+Settings → **Frame Rate** controls three things:
+
+- **Capture rate** — what the iPad sees. Costs CPU on this computer, because
+  every frame is encoded. Cannot exceed what the camera delivers.
+- **Preview size** — fewer pixels is the cheapest way to afford 60 fps.
+- **Watcher rate** — costs bandwidth per viewer but no CPU, since watchers
+  receive frames that were already encoded for the drawer.
+
+None of these affect the on-air output, which is drawn directly by the output
+window and is always smooth.
 
 **Esc** leaves fullscreen on the output window and **F11** toggles it, so you are
 never stuck with it covering the desktop.

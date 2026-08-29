@@ -108,9 +108,9 @@
   <div id="status-dot"></div>
 
   <script>
-    // Watchers get a lower frame rate than the person drawing: the server
-    // decimates the existing stream, so this costs no extra encoding.
-    const WATCH_FPS = 15;
+    // Frame rate is set on the server. Watchers receive a slice of frames
+    // already encoded for the drawer, so this costs bandwidth, never CPU.
+    let WATCH_FPS = 30;
 
     const canvas = document.getElementById('overlay');
     const ctx = canvas.getContext('2d');
@@ -268,8 +268,14 @@
       videoFeed.removeAttribute('src');
       msgEl.style.display = '';
     };
-    checkVideoFeed();
-    setInterval(checkVideoFeed, 3000);
+    fetch('/api/watch-config')
+      .then(r => r.json())
+      .then(c => { if (c.fps > 0) WATCH_FPS = c.fps; })
+      .catch(() => {})
+      .finally(() => {
+        checkVideoFeed();
+        setInterval(checkVideoFeed, 3000);
+      });
 
     // Fade the banner out after a few seconds so it does not sit on the video
     setTimeout(() => { document.getElementById('badge').style.opacity = '0'; }, 5000);
