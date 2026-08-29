@@ -17,7 +17,19 @@ not code-signed. Click **More info → Run anyway**.
 3. Plug in the capture source, click **Rescan Cameras**, select it, **Start Capture**.
 4. Under **Output Window**, pick the display the switcher captures and press
    **Open Output**. Uncheck fullscreen if you only have one monitor.
-5. Menu (press **Alt**) → **Show iPad URL** for the address to open on the iPad.
+5. Menu (press **Alt**) → **Show iPad URL** for the address to share.
+
+## Sharing the feed
+
+Give anyone on the network `http://<computer-ip>:3000` and they get a page with
+two choices:
+
+- **Telestrate** — the drawing page, for the commentator.
+- **Watch Only** — the feed plus the drawings, with no ability to draw.
+
+View-only is enforced by the server, not just hidden in the page, so a watcher
+cannot draw even with developer tools open. Watchers receive a 15 fps stream
+(about 0.6 Mbps each) while the person drawing gets the full 30 fps.
 
 **Esc** leaves fullscreen on the output window and **F11** toggles it, so you are
 never stuck with it covering the desktop.
