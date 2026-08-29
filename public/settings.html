@@ -187,11 +187,19 @@
     <select id="keymode-select">
       <option value="luma">Luma key &mdash; black background</option>
       <option value="chroma">Chroma key &mdash; green background</option>
+      <option value="transparent">Transparent &mdash; for an OBS browser source</option>
     </select>
     <p style="color:#777;font-size:13px;margin-top:4px">
-      Luma: black drops out; avoid drawing in black/dark colors.
-      Chroma: green drops out; avoid drawing in green.
+      Luma: black drops out; avoid dark colors. Chroma: green drops out; avoid green.
+      Transparent: real alpha, so OBS composites it with your other graphics and no
+      keying is needed inside OBS &mdash; use this one with the browser source below.
     </p>
+    <div class="url-item" style="margin-top:10px">
+      <div>
+        <div class="url-label">OBS &rarr; Sources &rarr; <strong>Browser</strong> &rarr; paste this URL, 1920 x 1080</div>
+        <div class="url-value" id="obs-source-url"></div>
+      </div>
+    </div>
   </div>
 
   <h2>Test Video</h2>
@@ -326,6 +334,7 @@
         el.textContent = `${location.protocol}//${location.hostname}:${s.watchPort}`;
       }
     }).catch(() => {});
+    document.getElementById('obs-source-url').textContent = `${baseUrl}/output.html`;
     document.getElementById('companion-clear').textContent = `${baseUrl}/api/clear`;
     document.getElementById('companion-undo').textContent = `${baseUrl}/api/undo`;
     document.getElementById('companion-hide').textContent = `${baseUrl}/api/hide/toggle`;
