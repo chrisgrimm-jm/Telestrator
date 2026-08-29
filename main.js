@@ -31,19 +31,93 @@ function createCaptureWindow() {
   captureWindow.on('closed', () => { captureWindow = null; });
 }
 
-function createOutputWindow() {
+function listDisplays() {
+  const { screen } = require('electron');
+  const primaryId = screen.getPrimaryDisplay().id;
+  return screen.getAllDisplays().map((d, i) => ({
+    id: String(d.id),
+    label: `Display ${i + 1} — ${d.size.width}x${d.size.height}` +
+           (d.id === primaryId ? ' (primary)' : ''),
+    width: d.size.width,
+    height: d.size.height,
+    primary: d.id === primaryId
+  }));
+}
+
+// The output window is what the switcher captures. It is opened on demand
+// from Settings so launching the app never hijacks the whole desktop.
+function openOutputWindow({ displayId, fullscreen = true } = {}) {
+  const { screen } = require('electron');
+  const displays = screen.getAllDisplays();
+  const target = displays.find(d => String(d.id) === String(displayId))
+    || screen.getPrimaryDisplay();
+
+  if (outputWindow) {
+    placeOutput(target, fullscreen);
+    outputWindow.show();
+    return;
+  }
+
   outputWindow = new BrowserWindow({
-    fullscreen: true,
+    x: target.bounds.x + 40,
+    y: target.bounds.y + 40,
+    width: 960,
+    height: 540,
     backgroundColor: '#000000',
     autoHideMenuBar: true,
+    title: 'Telestrator Output',
     webPreferences: { backgroundThrottling: false }
   });
   outputWindow.loadURL(`http://localhost:${PORT}/output.html`);
+
+  // Escape always gets you out of fullscreen — never be trapped
+  outputWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape' && outputWindow.isFullScreen()) {
+      outputWindow.setFullScreen(false);
+      event.preventDefault();
+    }
+  });
+
   outputWindow.on('closed', () => {
     outputWindow = null;
-    // The hidden capture window would otherwise keep the app alive
-    if (process.platform !== 'darwin') app.quit();
+    quitIfNoVisibleWindows();
   });
+
+  outputWindow.once('ready-to-show', () => placeOutput(target, fullscreen));
+}
+
+function placeOutput(display, fullscreen) {
+  if (!outputWindow) return;
+  if (fullscreen) {
+    // Move onto the target display first, then go fullscreen there
+    outputWindow.setFullScreen(false);
+    outputWindow.setBounds(display.bounds);
+    outputWindow.setFullScreen(true);
+  } else {
+    outputWindow.setFullScreen(false);
+    outputWindow.setBounds({
+      x: display.bounds.x + 40,
+      y: display.bounds.y + 40,
+      width: 960,
+      height: 540
+    });
+  }
+}
+
+function closeOutputWindow() {
+  if (outputWindow) outputWindow.close();
+}
+
+function getOutputState() {
+  return {
+    open: outputWindow !== null,
+    fullscreen: outputWindow ? outputWindow.isFullScreen() : false
+  };
+}
+
+// The hidden capture window must not keep the app alive on its own
+function quitIfNoVisibleWindows() {
+  if (!outputWindow && !settingsWindow) app.quit();
 }
 
 function openSettingsWindow() {
@@ -52,13 +126,17 @@ function openSettingsWindow() {
     return;
   }
   settingsWindow = new BrowserWindow({
-    width: 700,
-    height: 900,
+    width: 780,
+    height: 950,
     title: 'Telestrator Settings',
+    backgroundColor: '#1a1a1a',
     autoHideMenuBar: true
   });
   settingsWindow.loadURL(`http://localhost:${PORT}/settings.html`);
-  settingsWindow.on('closed', () => { settingsWindow = null; });
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
+    quitIfNoVisibleWindows();
+  });
 }
 
 // Fire one of the app's own control endpoints (same paths Companion uses)
@@ -132,7 +210,15 @@ function buildMenu() {
         },
         { type: 'separator' },
         {
-          label: 'Toggle Output Fullscreen',
+          label: 'Open Output Window',
+          click: () => openOutputWindow({ fullscreen: false })
+        },
+        {
+          label: 'Close Output Window',
+          click: closeOutputWindow
+        },
+        {
+          label: 'Toggle Output Fullscreen  (Esc exits)',
           accelerator: process.platform === 'darwin' ? 'Cmd+Shift+F' : 'F11',
           click: () => {
             if (outputWindow) outputWindow.setFullScreen(!outputWindow.isFullScreen());
@@ -150,7 +236,15 @@ function buildMenu() {
 
 app.whenReady().then(async () => {
   // Start the embedded web/WebSocket server (it listens on module load)
-  require('./server.js');
+  const serverApi = require('./server.js');
+
+  // Let the Settings page drive the output window over the same HTTP API
+  serverApi.setWindowHooks({
+    listDisplays,
+    openOutput: openOutputWindow,
+    closeOutput: closeOutputWindow,
+    getOutputState
+  });
 
   // Camera access: prompt macOS properly, and auto-grant our own pages
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
@@ -162,14 +256,15 @@ app.whenReady().then(async () => {
 
   buildMenu();
   registerHotkeys();
-  // Give the server a beat to bind before loading from it
+  // Open Settings first so the operator can pick a camera and an output
+  // display before anything takes over a screen.
   setTimeout(() => {
-    createOutputWindow();
+    openSettingsWindow();
     createCaptureWindow();
   }, 300);
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createOutputWindow();
+    if (!settingsWindow && !outputWindow) openSettingsWindow();
   });
 });
 
