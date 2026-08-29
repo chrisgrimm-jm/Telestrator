@@ -319,6 +319,52 @@ function captureInfo() {
 
 app.get('/api/diagnostics', (req, res) => res.json(captureInfo()));
 
+// --- Output window control (only available when running inside Electron) ---
+// main.js injects these so the Settings page can place the output window on a
+// chosen display without the app hijacking a screen at launch.
+const windowHooks = {
+  listDisplays: null,
+  openOutput: null,
+  closeOutput: null,
+  getOutputState: null
+};
+module.exports = {
+  setWindowHooks(hooks) { Object.assign(windowHooks, hooks); }
+};
+
+app.get('/api/displays', (req, res) => {
+  if (!windowHooks.listDisplays) {
+    res.json({ electron: false, displays: [], output: null });
+    return;
+  }
+  res.json({
+    electron: true,
+    displays: windowHooks.listDisplays(),
+    output: windowHooks.getOutputState ? windowHooks.getOutputState() : null
+  });
+});
+
+app.post('/api/output/open', express.json(), (req, res) => {
+  if (!windowHooks.openOutput) {
+    res.json({ ok: false, reason: 'not running inside the desktop app' });
+    return;
+  }
+  windowHooks.openOutput({
+    displayId: req.body.displayId,
+    fullscreen: req.body.fullscreen !== false
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/output/close', (req, res) => {
+  if (!windowHooks.closeOutput) {
+    res.json({ ok: false, reason: 'not running inside the desktop app' });
+    return;
+  }
+  windowHooks.closeOutput();
+  res.json({ ok: true });
+});
+
 // Force the capture window to re-enumerate cameras (e.g. after quitting OBS
 // or granting camera permission) — Refresh alone only re-read a cached list.
 app.post('/api/devices/rescan', (req, res) => {

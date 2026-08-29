@@ -129,6 +129,29 @@
     </div>
   </div>
 
+  <h2>Output Window</h2>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <span>Status</span>
+      <span class="status-badge stopped" id="output-status">Closed</span>
+    </div>
+    <label>Which display should the switcher capture?</label>
+    <select id="display-select"><option>Loading…</option></select>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">
+      <input type="checkbox" id="output-fullscreen" checked style="width:auto;margin:0">
+      <span>Open fullscreen on that display</span>
+    </label>
+    <div class="btn-row">
+      <button class="btn-primary" id="btn-output-open">Open Output</button>
+      <button class="btn-danger" id="btn-output-close">Close Output</button>
+    </div>
+    <p style="color:#777;font-size:13px;margin-top:12px">
+      Press <strong>Esc</strong> on the output window to leave fullscreen at any time,
+      or <strong>F11</strong> to toggle it. With one display, open it windowed so you can
+      still use the desktop.
+    </p>
+  </div>
+
   <h2>Key Mode</h2>
   <div class="card">
     <label>Output background &mdash; match how the ATEM keys the telestrator source</label>
@@ -404,6 +427,68 @@
 
     refreshDiag();
     setInterval(refreshDiag, 4000);
+
+    // --- Output window placement ---
+    const displaySelect = document.getElementById('display-select');
+    const outputStatus = document.getElementById('output-status');
+    let displaysLoaded = false;
+
+    async function refreshDisplays() {
+      try {
+        const res = await fetch('/api/displays');
+        const data = await res.json();
+
+        if (!data.electron) {
+          displaySelect.innerHTML = '<option>Desktop app only</option>';
+          displaySelect.disabled = true;
+          document.getElementById('btn-output-open').disabled = true;
+          document.getElementById('btn-output-close').disabled = true;
+          outputStatus.textContent = 'Browser mode';
+          return;
+        }
+
+        // Only rebuild the list once so the user's choice is not clobbered
+        if (!displaysLoaded && data.displays.length) {
+          displaySelect.innerHTML = data.displays
+            .map(d => `<option value="${d.id}">${d.label}</option>`).join('');
+          // Default to a secondary display when one exists — that is normally
+          // the one feeding the switcher
+          const secondary = data.displays.find(d => !d.primary);
+          if (secondary) displaySelect.value = secondary.id;
+          displaysLoaded = true;
+        }
+
+        if (data.output && data.output.open) {
+          outputStatus.textContent = data.output.fullscreen ? 'Open (fullscreen)' : 'Open (windowed)';
+          outputStatus.className = 'status-badge running';
+        } else {
+          outputStatus.textContent = 'Closed';
+          outputStatus.className = 'status-badge stopped';
+        }
+      } catch (e) { /* server not reachable yet */ }
+    }
+
+    document.getElementById('btn-output-open').addEventListener('click', async () => {
+      await fetch('/api/output/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          displayId: displaySelect.value,
+          fullscreen: document.getElementById('output-fullscreen').checked
+        })
+      });
+      addLog('Output window opened.');
+      setTimeout(refreshDisplays, 600);
+    });
+
+    document.getElementById('btn-output-close').addEventListener('click', async () => {
+      await fetch('/api/output/close', { method: 'POST' });
+      addLog('Output window closed.');
+      setTimeout(refreshDisplays, 400);
+    });
+
+    refreshDisplays();
+    setInterval(refreshDisplays, 3000);
 
     // --- Test video control (via WebSocket) ---
     const testStatus = document.getElementById('test-status');

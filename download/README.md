@@ -11,11 +11,16 @@ not code-signed. Click **More info → Run anyway**.
 
 ## After installing
 
-1. Launch **Telestrator** — the black output window opens fullscreen.
-2. Press **Alt** for the menu → **Settings**.
-3. The **Diagnostics** panel lists every camera Windows can see.
-4. Plug in the capture source, click **Rescan Cameras**, select it, **Start Capture**.
-5. Menu → **Show iPad URL** for the address to open on the iPad.
+1. Launch **Telestrator** — it opens the **Settings** window. Nothing takes over a
+   screen until you say so.
+2. The **Diagnostics** panel lists every camera Windows can see.
+3. Plug in the capture source, click **Rescan Cameras**, select it, **Start Capture**.
+4. Under **Output Window**, pick the display the switcher captures and press
+   **Open Output**. Uncheck fullscreen if you only have one monitor.
+5. Menu (press **Alt**) → **Show iPad URL** for the address to open on the iPad.
+
+**Esc** leaves fullscreen on the output window and **F11** toggles it, so you are
+never stuck with it covering the desktop.
 
 Feed the output window's display into the ATEM and set up a **luma key** (black
 drops out). Green/chroma is selectable in Settings instead.
