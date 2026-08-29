@@ -81,6 +81,7 @@ wss.on('connection', (ws, req) => {
   const role = url.searchParams.get('role') || 'draw';
 
   console.log(`Client connected: ${role}`);
+  ws.role = role;
 
   if (role === 'capture') {
     captureWs = ws;
@@ -112,7 +113,19 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+// Roles allowed to change what is on air. Watch clients are read-only, and
+// this is enforced here rather than only in the UI so it cannot be bypassed.
+const WRITE_ROLES = new Set(['draw', 'settings', 'output', 'capture']);
+const WRITE_TYPES = new Set([
+  'stroke', 'stroke-update', 'undo', 'clear', 'spotlight',
+  'test-video', 'keymode', 'video-control'
+]);
+
 function handleMessage(msg, sender) {
+  if (WRITE_TYPES.has(msg.type) && !WRITE_ROLES.has(sender.role)) {
+    return; // view-only client tried to change state
+  }
+
   switch (msg.type) {
     case 'stroke':
       strokes.push(msg.stroke);
@@ -276,12 +289,17 @@ function buildCaptureArgs(deviceIndex) {
 // this the preview falls progressively further behind on a slow link.
 let framesDropped = 0;
 function distributeFrame(frame) {
+  const now = Date.now();
   for (let i = mjpegClients.length - 1; i >= 0; i--) {
     const res = mjpegClients[i];
     if (res.writableNeedDrain) {
       framesDropped++;
       continue;
     }
+    // Per-client frame rate: watchers take a slice of the same encoded
+    // frames, so a lower rate costs bandwidth only, never extra CPU.
+    if (res.minInterval && now - res.lastFrameAt < res.minInterval - 2) continue;
+    res.lastFrameAt = now;
     try {
       res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`);
       res.write(frame);
@@ -472,6 +490,11 @@ app.get('/video/stream', (req, res) => {
     'Connection': 'keep-alive'
   });
 
+  // ?fps=N thins the stream for this viewer (watch pages ask for less)
+  const fps = parseInt(req.query.fps);
+  res.minInterval = (fps > 0 && fps < 30) ? 1000 / fps : 0;
+  res.lastFrameAt = 0;
+
   mjpegClients.push(res);
   req.on('close', () => {
     const i = mjpegClients.indexOf(res);
@@ -570,7 +593,9 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('');
   console.log('=== TELESTRATOR ===');
   console.log('');
-  console.log(`  iPad (draw):    http://${ip}:${PORT}`);
+  console.log(`  Share (choose): http://${ip}:${PORT}`);
+  console.log(`  Draw:           http://${ip}:${PORT}/draw.html`);
+  console.log(`  Watch only:     http://${ip}:${PORT}/watch.html`);
   console.log(`  Output (ATEM):  http://${ip}:${PORT}/output.html`);
   console.log(`  Settings:       http://${ip}:${PORT}/settings.html`);
   console.log('');

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Telestrator — Watch</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      /* View-only: nothing here should be draggable or selectable */
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    /* Same 16:9 stage as the drawing and output pages, so strokes land on
+       the same pixels of the video no matter the screen shape */
+    #stage {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(100vw, calc(100vh * 16 / 9));
+      height: min(100vh, calc(100vw * 9 / 16));
+      background: #000;
+    }
+    #video-feed {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+      z-index: 1;
+      pointer-events: none;
+    }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+    #spotlight {
+      position: absolute;
+      width: 22%;
+      padding-bottom: 22%;
+      border-radius: 50%;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+      transform: translate(-50%, -50%);
+      display: none;
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    #msg {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: #55606f;
+      font-size: 17px;
+      text-align: center;
+      line-height: 1.6;
+      z-index: 0;
+    }
+
+    #badge {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.55);
+      color: #9aa4b8;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      padding: 4px 14px;
+      border-radius: 20px;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+    #status-dot {
+      position: fixed;
+      top: 12px; right: 12px;
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: #c0392b;
+      z-index: 10;
+    }
+    #status-dot.connected { background: #27ae60; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="msg">Waiting for the feed…</div>
+    <img id="video-feed" alt="">
+    <canvas id="overlay"></canvas>
+    <div id="spotlight"></div>
+  </div>
+  <div id="badge">WATCHING — VIEW ONLY</div>
+  <div id="status-dot"></div>
+
+  <script>
+    // Watchers get a lower frame rate than the person drawing: the server
+    // decimates the existing stream, so this costs no extra encoding.
+    const WATCH_FPS = 15;
+
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
+    const videoFeed = document.getElementById('video-feed');
+    const spotlightEl = document.getElementById('spotlight');
+    const msgEl = document.getElementById('msg');
+    const statusDot = document.getElementById('status-dot');
+
+    let strokes = [];
+    let hidden = false;
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.clientWidth * dpr;
+      canvas.height = canvas.clientHeight * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      redraw();
+    }
+    window.addEventListener('resize', resize);
+
+    function toCanvas(nx, ny) {
+      return { x: nx * canvas.clientWidth, y: ny * canvas.clientHeight };
+    }
+
+    function drawStroke(s) {
+      if (!s.points || s.points.length < 1) return;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.lineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      if (s.tool === 'pen' || s.tool === 'arrow') {
+        ctx.beginPath();
+        const p0 = toCanvas(s.points[0].x, s.points[0].y);
+        ctx.moveTo(p0.x, p0.y);
+        for (let i = 1; i < s.points.length; i++) {
+          const p = toCanvas(s.points[i].x, s.points[i].y);
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+
+        if (s.tool === 'arrow' && s.points.length >= 2) {
+          const last = s.points[s.points.length - 1];
+          const prev = s.points[Math.max(0, s.points.length - 5)];
+          const lp = toCanvas(last.x, last.y);
+          const pp = toCanvas(prev.x, prev.y);
+          const angle = Math.atan2(lp.y - pp.y, lp.x - pp.x);
+          const headLen = s.lineWidth * 4;
+          ctx.beginPath();
+          ctx.moveTo(lp.x, lp.y);
+          ctx.lineTo(lp.x - headLen * Math.cos(angle - 0.4), lp.y - headLen * Math.sin(angle - 0.4));
+          ctx.moveTo(lp.x, lp.y);
+          ctx.lineTo(lp.x - headLen * Math.cos(angle + 0.4), lp.y - headLen * Math.sin(angle + 0.4));
+          ctx.stroke();
+        }
+      } else if (s.tool === 'circle' && s.points.length >= 2) {
+        const p0 = toCanvas(s.points[0].x, s.points[0].y);
+        const p1 = toCanvas(s.points[s.points.length - 1].x, s.points[s.points.length - 1].y);
+        const cx = (p0.x + p1.x) / 2;
+        const cy = (p0.y + p1.y) / 2;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, Math.abs(p1.x - p0.x) / 2, Math.abs(p1.y - p0.y) / 2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    function redraw() {
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      if (hidden) return;
+      strokes.forEach(drawStroke);
+    }
+
+    // --- WebSocket (receive only — this page never sends state) ---
+    let ws = null;
+    let reconnectTimer = null;
+
+    function connectWS() {
+      if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}?role=watch`);
+
+      ws.onopen = () => statusDot.classList.add('connected');
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        switch (msg.type) {
+          case 'state':
+            strokes = msg.strokes || [];
+            hidden = !!msg.hidden;
+            redraw();
+            break;
+          case 'stroke':
+            strokes.push(msg.stroke);
+            redraw();
+            break;
+          case 'stroke-update': {
+            const i = strokes.findIndex(s => s.id === msg.id);
+            if (i !== -1) { strokes[i].points = msg.points; redraw(); }
+            break;
+          }
+          case 'undo':
+            strokes.pop();
+            redraw();
+            break;
+          case 'clear':
+            strokes = [];
+            redraw();
+            break;
+          case 'hidden':
+            hidden = msg.hidden;
+            if (hidden) spotlightEl.style.display = 'none';
+            redraw();
+            break;
+          case 'spotlight':
+            if (msg.active && !hidden) {
+              spotlightEl.style.display = 'block';
+              spotlightEl.style.left = (msg.x * 100) + '%';
+              spotlightEl.style.top = (msg.y * 100) + '%';
+            } else {
+              spotlightEl.style.display = 'none';
+            }
+            break;
+        }
+      };
+
+      ws.onclose = () => {
+        statusDot.classList.remove('connected');
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectWS, 2000);
+      };
+      ws.onerror = () => ws.close();
+    }
+    connectWS();
+
+    // --- Video feed: attach only while capture is actually running ---
+    let feedAttached = false;
+    async function checkVideoFeed() {
+      try {
+        const res = await fetch('/api/devices');
+        const data = await res.json();
+        const running = data.current !== null && data.current !== undefined;
+        if (running && !feedAttached) {
+          feedAttached = true;
+          videoFeed.src = `/video/stream?fps=${WATCH_FPS}`;
+          msgEl.style.display = 'none';
+        } else if (!running && feedAttached) {
+          feedAttached = false;
+          videoFeed.removeAttribute('src');
+          msgEl.style.display = '';
+        }
+      } catch (e) { /* retry on next poll */ }
+    }
+    videoFeed.onerror = () => {
+      feedAttached = false;
+      videoFeed.removeAttribute('src');
+      msgEl.style.display = '';
+    };
+    checkVideoFeed();
+    setInterval(checkVideoFeed, 3000);
+
+    // Fade the banner out after a few seconds so it does not sit on the video
+    setTimeout(() => { document.getElementById('badge').style.opacity = '0'; }, 5000);
+
+    resize();
+  </script>
+</body>
+</html>
