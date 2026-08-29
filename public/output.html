@@ -131,37 +131,6 @@
       strokes.forEach(drawStroke);
     }
 
-    // Fade the current drawings out over ~0.8s, then drop them
-    function fadeAndClear() {
-      if (strokes.length === 0) return;
-      const snapshot = strokes;
-      strokes = [];
-      const start = performance.now();
-      const dur = 800;
-      let done = false;
-      function finish() {
-        if (done) return;
-        done = true;
-        redraw();
-      }
-      function step(now) {
-        if (done) return;
-        const t = (now - start) / dur;
-        if (t < 1 && !hidden) {
-          ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-          ctx.globalAlpha = 1 - t;
-          snapshot.forEach(drawStroke);
-          ctx.globalAlpha = 1;
-          requestAnimationFrame(step);
-        } else {
-          finish();
-        }
-      }
-      requestAnimationFrame(step);
-      // Failsafe: guarantee the clear lands even if rAF is throttled/paused
-      setTimeout(finish, dur + 200);
-    }
-
     // --- WebSocket ---
     let ws = null;
     let reconnectTimer = null;
@@ -203,8 +172,9 @@
             redraw();
             break;
           case 'clear':
-            if (msg.fade) fadeAndClear();
-            else { strokes = []; redraw(); }
+            // Hard cut — a dissolve reads as a glitch on air
+            strokes = [];
+            redraw();
             break;
           case 'spotlight':
             if (msg.active && !hidden) {

@@ -348,37 +348,12 @@
       if (currentStroke) drawStroke(currentStroke);
     }
 
-    // Fade the current drawings out over ~0.8s, then drop them
-    function fadeAndClear() {
-      if (strokes.length === 0 && !currentStroke) return;
-      const snapshot = currentStroke ? [...strokes, currentStroke] : strokes;
+    // Hard cut — a dissolve reads as a glitch on air
+    function clearAll() {
       strokes = [];
       currentStroke = null;
       drawing = false;
-      const start = performance.now();
-      const dur = 800;
-      let done = false;
-      function finish() {
-        if (done) return;
-        done = true;
-        redraw();
-      }
-      function step(now) {
-        if (done) return;
-        const t = (now - start) / dur;
-        if (t < 1) {
-          ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-          ctx.globalAlpha = 1 - t;
-          snapshot.forEach(drawStroke);
-          ctx.globalAlpha = 1;
-          requestAnimationFrame(step);
-        } else {
-          finish();
-        }
-      }
-      requestAnimationFrame(step);
-      // Failsafe: guarantee the clear lands even if rAF is throttled/paused
-      setTimeout(finish, dur + 200);
+      redraw();
     }
 
     function updateBadges(state) {
@@ -493,7 +468,7 @@
 
     document.getElementById('btn-clear').addEventListener('click', () => {
       sendWS({ type: 'clear' });
-      fadeAndClear();
+      clearAll();
     });
 
     document.getElementById('btn-freeze').addEventListener('click', () => {
@@ -592,8 +567,7 @@
             redraw();
             break;
           case 'clear':
-            if (msg.fade) fadeAndClear();
-            else { strokes = []; redraw(); }
+            clearAll();
             break;
           case 'test-video':
             setTestVideo(msg.testVideo);
