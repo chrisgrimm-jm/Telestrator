@@ -45,8 +45,35 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 3000;
+const WATCH_PORT = process.env.WATCH_PORT || 3001;
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+// --- Watch-only server on its own port ---------------------------------
+// Hands out nothing but the feed. There is no draw page, no settings and no
+// control API here, and its sockets are hard-coded to the read-only role, so
+// a viewer on this port cannot change what is on air even deliberately.
+const watchApp = express();
+const watchServer = http.createServer(watchApp);
+const watchWss = new WebSocketServer({ server: watchServer });
+
+function sendWatchPage(req, res) {
+  res.sendFile(path.join(__dirname, 'public', 'watch.html'));
+}
+watchApp.get('/', sendWatchPage);
+watchApp.get('/watch.html', sendWatchPage);
+watchApp.get('/index.html', sendWatchPage);
+
+watchApp.get('/video/stream', (req, res) => mjpegHandler(req, res));
+
+// Just enough for the page to know whether a feed is live
+watchApp.get('/api/devices', (req, res) => {
+  res.json({ devices: [], current: currentVideoDevice });
+});
+watchApp.get('/api/watch-config', (req, res) => watchConfig(req, res));
+
+// Anything else on this port is not available
+watchApp.use((req, res) => res.status(404).send('Watch only.'));
 
 // --- State ---
 let strokes = [];
@@ -56,6 +83,7 @@ let captureWs = null;      // Electron hidden window doing getUserMedia capture
 let captureDevices = [];   // devices reported by the Electron capture window
 let captureError = null;   // last capture failure, surfaced in Settings UI
 let capturePermission = 'unknown'; // camera permission as seen by the capture window
+let captureSource = null;  // actual resolution/frameRate the camera delivers
 let mjpegClients = [];     // open /video/stream responses
 let testVideo = null; // { videoId } when test video mode is active
 let hidden = false;   // TD has pulled drawings off the output
@@ -185,6 +213,7 @@ function handleMessage(msg, sender) {
 
     case 'capture-state':
       currentVideoDevice = msg.current;
+      if (msg.source) captureSource = msg.source;
       if (msg.current) captureError = null;
       broadcast({ type: 'capture-info', ...captureInfo() });
       break;
@@ -198,13 +227,24 @@ function handleMessage(msg, sender) {
   }
 }
 
+// Viewers on the watch port: receive state, never send it
+watchWss.on('connection', (ws) => {
+  ws.role = 'watch';
+  console.log('Client connected: watch (port ' + WATCH_PORT + ')');
+  ws.send(JSON.stringify({ type: 'state', strokes, hidden }));
+  // Deliberately no message handler — this socket is receive-only
+  ws.on('close', () => console.log('Client disconnected: watch'));
+});
+
 function broadcast(msg, excludeSender) {
   const data = JSON.stringify(msg);
-  wss.clients.forEach(client => {
+  const send = (client) => {
     if (client !== excludeSender && client.readyState === 1) {
       client.send(data);
     }
-  });
+  };
+  wss.clients.forEach(send);
+  watchWss.clients.forEach(send);
 }
 
 // --- Video capture (MJPEG stream from capture card) ---
@@ -323,6 +363,10 @@ function captureInfo() {
     deviceCount: captureWs ? captureDevices.length : null,
     devices: captureWs ? captureDevices.map(d => d.name) : null,
     currentDevice: currentVideoDevice,
+    source: captureSource,
+    previewFps: captureFps,
+    previewSize,
+    watchFps,
     capturing: captureActive(),
     streamViewers: mjpegClients.length,
     framesDropped,
@@ -381,6 +425,59 @@ app.post('/api/output/close', (req, res) => {
   }
   windowHooks.closeOutput();
   res.json({ ok: true });
+});
+
+// Preview frame rate. Higher costs CPU (every frame is JPEG-encoded) and
+// bandwidth; it can never exceed what the camera itself delivers.
+let captureFps = 30;
+
+// Preview resolution. Fewer pixels is the cheapest way to buy CPU headroom
+// when running at a high frame rate; it does not affect the on-air output,
+// only what the iPad and watchers see.
+let previewSize = { width: 1280, height: 720 };
+app.post('/api/capture/size', (req, res) => {
+  const w = parseInt(req.query.width);
+  const h = parseInt(req.query.height);
+  if (!(w > 0 && h > 0)) {
+    res.json({ ok: false, reason: 'width and height required' });
+    return;
+  }
+  previewSize = { width: w, height: h };
+  if (captureWs) captureWs.send(JSON.stringify({ type: 'capture-size', width: w, height: h }));
+  console.log(`[capture] preview size -> ${w}x${h}`);
+  res.json({ ok: true, ...previewSize });
+});
+
+// Watcher frame rate. Watchers receive a slice of frames that were already
+// encoded for the drawer, so raising this costs bandwidth per viewer but no
+// extra CPU at all. Capped at the capture rate — there is nothing above it.
+let watchFps = 30;
+app.post('/api/watch/fps', (req, res) => {
+  const v = parseInt(req.query.value);
+  if (!(v > 0 && v <= 60)) {
+    res.json({ ok: false, reason: 'value must be 1-60' });
+    return;
+  }
+  watchFps = v;
+  console.log(`[watch] viewer fps -> ${v}`);
+  res.json({ ok: true, fps: v });
+});
+
+// Both servers expose this so the watch page knows what to request
+function watchConfig(req, res) {
+  res.json({ fps: Math.min(watchFps, captureFps) });
+}
+app.get('/api/watch-config', watchConfig);
+app.post('/api/capture/fps', (req, res) => {
+  const v = parseInt(req.query.value);
+  if (!(v > 0 && v <= 60)) {
+    res.json({ ok: false, reason: 'value must be 1-60' });
+    return;
+  }
+  captureFps = v;
+  if (captureWs) captureWs.send(JSON.stringify({ type: 'capture-fps', fps: v }));
+  console.log(`[capture] preview fps -> ${v}`);
+  res.json({ ok: true, fps: v });
 });
 
 // Force the capture window to re-enumerate cameras (e.g. after quitting OBS
@@ -477,8 +574,8 @@ app.post('/api/capture/stop', (req, res) => {
 });
 
 // MJPEG stream endpoint — frames come from the Electron capture window
-// (or ffmpeg in headless mode) via distributeFrame()
-app.get('/video/stream', (req, res) => {
+// (or ffmpeg in headless mode) via distributeFrame(). Shared by both ports.
+function mjpegHandler(req, res) {
   if (!captureActive()) {
     res.status(503).send('No capture running. Start capture first.');
     return;
@@ -500,7 +597,8 @@ app.get('/video/stream', (req, res) => {
     const i = mjpegClients.indexOf(res);
     if (i !== -1) mjpegClients.splice(i, 1);
   });
-});
+}
+app.get('/video/stream', mjpegHandler);
 
 // --- Companion / external control (Bitfocus Companion "Generic HTTP") ---
 // GET or POST both work so any HTTP-capable controller can use these.
@@ -560,7 +658,9 @@ app.get('/api/status', (req, res) => {
     keyMode,
     capturing: captureActive(),
     testVideo: testVideo ? testVideo.videoId : null,
-    clients: wss.clients.size
+    clients: wss.clients.size,
+    watchers: watchWss.clients.size,
+    watchPort: WATCH_PORT
   });
 });
 
@@ -595,8 +695,13 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('');
   console.log(`  Share (choose): http://${ip}:${PORT}`);
   console.log(`  Draw:           http://${ip}:${PORT}/draw.html`);
-  console.log(`  Watch only:     http://${ip}:${PORT}/watch.html`);
   console.log(`  Output (ATEM):  http://${ip}:${PORT}/output.html`);
   console.log(`  Settings:       http://${ip}:${PORT}/settings.html`);
   console.log('');
+  console.log(`  WATCHERS:       http://${ip}:${WATCH_PORT}`);
+  console.log('');
+});
+
+watchServer.listen(WATCH_PORT, '0.0.0.0', () => {
+  console.log(`Watch-only server listening on ${WATCH_PORT}`);
 });
