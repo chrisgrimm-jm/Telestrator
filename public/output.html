@@ -59,7 +59,15 @@
     let hidden = false;
 
     function applyKeyMode(mode) {
-      document.body.style.background = mode === 'chroma' ? '#00FF00' : '#000000';
+      // 'transparent' leaves real alpha behind the strokes so an OBS browser
+      // source can composite them over other layers with no keying at all.
+      const bg = mode === 'chroma' ? '#00FF00'
+               : mode === 'transparent' ? 'transparent'
+               : '#000000';
+      document.body.style.background = bg;
+      document.documentElement.style.background = bg;
+      const stage = document.getElementById('stage');
+      if (stage) stage.style.background = bg;
     }
 
     function resizeCanvas() {

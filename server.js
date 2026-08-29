@@ -89,7 +89,10 @@ let testVideo = null; // { videoId } when test video mode is active
 let hidden = false;   // TD has pulled drawings off the output
 let autoClear = { enabled: false, seconds: 15 };
 let autoClearTimer = null;
-let keyMode = 'luma'; // 'luma' = black background, 'chroma' = green background
+// 'luma' = black background, 'chroma' = green, 'transparent' = real alpha for
+// an OBS browser source (which composites it against whatever is beneath).
+const KEY_MODES = new Set(['luma', 'chroma', 'transparent']);
+let keyMode = 'luma';
 
 function scheduleAutoClear() {
   clearTimeout(autoClearTimer);
@@ -190,7 +193,7 @@ function handleMessage(msg, sender) {
       break;
 
     case 'keymode':
-      if (msg.mode === 'luma' || msg.mode === 'chroma') {
+      if (KEY_MODES.has(msg.mode)) {
         keyMode = msg.mode;
         broadcast({ type: 'keymode', keyMode });
       }
@@ -647,6 +650,7 @@ function setKeyMode(mode) {
 }
 companionEndpoint('/api/keymode/luma', () => setKeyMode('luma'));
 companionEndpoint('/api/keymode/chroma', () => setKeyMode('chroma'));
+companionEndpoint('/api/keymode/transparent', () => setKeyMode('transparent'));
 companionEndpoint('/api/keymode/toggle', () => setKeyMode(keyMode === 'luma' ? 'chroma' : 'luma'));
 
 // Status for Companion button feedback (poll this with Generic HTTP feedbacks)
