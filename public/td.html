@@ -90,6 +90,16 @@
       #editor { position: fixed; inset: 0; max-height: none; z-index: 5; }
       #gear { top: auto; right: auto; left: 10px; bottom: 10px; }
     }
+
+    /* Buttons hidden: the feed fills the screen */
+    #tog {
+      position: fixed; top: 10px; left: 10px;
+      background: rgba(0, 0, 0, 0.55); color: #9aa4b8;
+      border: 0; border-radius: 20px; padding: 6px 12px; font-size: 14px; z-index: 6;
+    }
+    body.full { justify-content: center; }
+    body.full #stage { width: min(100vw, calc(100vh * 16 / 9)); margin: 0 auto; align-self: center; }
+    body.full #cams, body.full #note { display: none; }
   </style>
 </head>
 <body>
@@ -99,6 +109,7 @@
   </div>
   <div id="note"></div>
   <div id="cams"></div>
+  <button id="tog">Hide cameras</button>
   <button id="gear">&#9881; Edit</button>
 
   <div id="editor">
@@ -187,6 +198,11 @@
       document.getElementById('editor').classList.remove('open');
     };
     renderCams();
+
+    document.getElementById('tog').onclick = (e) => {
+      const full = document.body.classList.toggle('full');
+      e.target.textContent = full ? 'Show cameras' : 'Hide cameras';
+    };
 
     // --- Live feed (same attach-while-capturing logic as the watch page) ---
     const videoFeed = document.getElementById('video-feed');
