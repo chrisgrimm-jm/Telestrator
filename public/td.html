@@ -118,14 +118,14 @@
     <label>Cameras &mdash; one per line: <code>Name, page/row/column</code></label>
     <textarea id="list" spellcheck="false" placeholder="Cam 1, 1/0/0&#10;Cam 2, 1/0/1"></textarea>
     <div class="gen">
-      Fill with <input id="g-n" value="20"> cameras starting at <input id="g-start" value="1/0/0">
-      <input id="g-cols" value="8"> per row <button id="gen">Fill</button>
+      Fill with <input id="g-n" value="20"> cameras starting at <input id="g-start" value="10/0/1">
+      <input id="g-cols" value="7"> per row <button id="gen">Fill</button>
     </div>
     <button id="save">Save</button>
     <div class="hint">
       Each button presses <code>/api/location/page/row/column/press</code> on Companion, e.g. <code>1/0/2</code>
-      is page 1, row 0, column 2. Fill numbers cameras left to right, wrapping to the next row after the
-      per-row count (Companion pages are 8 wide by default); edit any line after. The red button is the one you pressed last &mdash; it is a marker on this
+      is page 1, row 0, column 2. Fill numbers cameras left to right, wrapping to the next row, back at the
+      starting column, after the per-row count; edit any line after. The red button is the one you pressed last &mdash; it is a marker on this
       panel, not read back from the switcher.
     </div>
   </div>
@@ -183,8 +183,7 @@
       const [p, r, c] = document.getElementById('g-start').value.split('/').map(Number);
       if (!(n > 0) || [p, r, c].some(isNaN)) return;
       listEl.value = Array.from({ length: n }, (_, i) => {
-        const k = c + i;
-        return `Cam ${i + 1}, ${p}/${r + Math.floor(k / cols)}/${k % cols}`;
+        return `Cam ${i + 1}, ${p}/${r + Math.floor(i / cols)}/${c + i % cols}`;
       }).join('\n');
     };
     document.getElementById('save').onclick = () => {
