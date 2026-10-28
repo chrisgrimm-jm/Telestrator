@@ -21,7 +21,7 @@
     #stage {
       position: relative;
       flex: 0 0 auto;
-      width: min(100vw, calc((100vh - 140px) * 16 / 9));
+      width: min(100vw, calc((100vh - 220px) * 16 / 9));
       aspect-ratio: 16 / 9;
       margin: 0 auto;
       background: #000;
@@ -36,18 +36,20 @@
     #cams {
       flex: 1;
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 10px;
-      padding: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+      overflow-y: auto;
+      min-height: 0;
+      gap: 8px;
+      padding: 10px;
       align-content: start;
     }
     .cam {
-      min-height: 84px;
+      min-height: 64px;
       border-radius: 12px;
       border: 2px solid #2a3140;
       background: #1a2030;
       color: #e8ecf4;
-      font-size: 22px;
+      font-size: 19px;
       font-weight: 700;
       font-family: inherit;
     }
@@ -68,9 +70,26 @@
       background: #0c0e12; color: #e8ecf4; border: 1px solid #2a3140;
       border-radius: 6px; padding: 8px; font-size: 15px; width: 100%;
     }
-    .row { display: grid; grid-template-columns: 1fr 1fr 40px; gap: 6px; margin-top: 6px; }
+    #list {
+      background: #0c0e12; color: #e8ecf4; border: 1px solid #2a3140; border-radius: 6px;
+      padding: 8px; font: 14px ui-monospace, Menlo, monospace; width: 100%; height: 180px;
+    }
+    .gen { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+    .gen input { width: 64px; }
+    #editor { max-height: 55vh; overflow-y: auto; }
     #editor button { padding: 8px 14px; border-radius: 6px; border: 0; background: #2b4a6b; color: #fff; font-size: 14px; margin-top: 8px; }
     .hint { color: #6a7488; font-size: 12px; margin-top: 8px; line-height: 1.5; }
+
+    /* Phone held sideways: feed on the left, buttons on the right */
+    @media (orientation: landscape) and (max-height: 520px) {
+      body { flex-direction: row; }
+      #stage { width: 52vw; margin: 0; align-self: flex-start; }
+      #cams { grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); }
+      .cam { min-height: 52px; font-size: 16px; }
+      #note { position: fixed; bottom: 4px; left: 0; right: 0; pointer-events: none; }
+      #editor { position: fixed; inset: 0; max-height: none; z-index: 5; }
+      #gear { top: auto; right: auto; left: 10px; bottom: 10px; }
+    }
   </style>
 </head>
 <body>
@@ -85,13 +104,17 @@
   <div id="editor">
     <label>Companion address</label>
     <input id="host" placeholder="192.168.0.75:8000">
-    <label>Cameras &mdash; name and Companion button (page/row/column)</label>
-    <div id="rows"></div>
-    <button id="add">+ Add camera</button>
+    <label>Cameras &mdash; one per line: <code>Name, page/row/column</code></label>
+    <textarea id="list" spellcheck="false" placeholder="Cam 1, 1/0/0&#10;Cam 2, 1/0/1"></textarea>
+    <div class="gen">
+      Fill with <input id="g-n" value="20"> cameras starting at <input id="g-start" value="1/0/0">
+      <input id="g-cols" value="8"> per row <button id="gen">Fill</button>
+    </div>
     <button id="save">Save</button>
     <div class="hint">
       Each button presses <code>/api/location/page/row/column/press</code> on Companion, e.g. <code>1/0/2</code>
-      is page 1, row 0, column 2. The red button is the one you pressed last &mdash; it is a marker on this
+      is page 1, row 0, column 2. Fill numbers cameras left to right, wrapping to the next row after the
+      per-row count (Companion pages are 8 wide by default); edit any line after. The red button is the one you pressed last &mdash; it is a marker on this
       panel, not read back from the switcher.
     </div>
   </div>
@@ -133,32 +156,31 @@
     }
 
     // --- Editor ---
-    const rowsEl = document.getElementById('rows');
-    function addRow(c = { name: '', loc: '' }) {
-      const r = document.createElement('div');
-      r.className = 'row';
-      r.innerHTML = '<input class="n" placeholder="Name (Cam 1)"><input class="l" placeholder="1/0/0"><button>&times;</button>';
-      r.querySelector('.n').value = c.name;
-      r.querySelector('.l').value = c.loc;
-      r.querySelector('button').onclick = () => r.remove();
-      rowsEl.appendChild(r);
-    }
-    function openEditor() {
-      document.getElementById('host').value = cfg.host;
-      rowsEl.innerHTML = '';
-      (cfg.cams.length ? cfg.cams : [{ name: '', loc: '' }]).forEach(addRow);
-    }
-    document.getElementById('add').onclick = () => addRow();
+    const listEl = document.getElementById('list');
     document.getElementById('gear').onclick = () => {
       const ed = document.getElementById('editor');
       ed.classList.toggle('open');
-      if (ed.classList.contains('open')) openEditor();
+      if (ed.classList.contains('open')) {
+        document.getElementById('host').value = cfg.host;
+        listEl.value = cfg.cams.map(c => `${c.name}, ${c.loc}`).join('\n');
+      }
+    };
+    document.getElementById('gen').onclick = () => {
+      const n = +document.getElementById('g-n').value;
+      const cols = +document.getElementById('g-cols').value || 8;
+      const [p, r, c] = document.getElementById('g-start').value.split('/').map(Number);
+      if (!(n > 0) || [p, r, c].some(isNaN)) return;
+      listEl.value = Array.from({ length: n }, (_, i) => {
+        const k = c + i;
+        return `Cam ${i + 1}, ${p}/${r + Math.floor(k / cols)}/${k % cols}`;
+      }).join('\n');
     };
     document.getElementById('save').onclick = () => {
       cfg.host = document.getElementById('host').value.trim().replace(/^https?:\/\//, '') || DEFAULTS.host;
-      cfg.cams = [...rowsEl.querySelectorAll('.row')]
-        .map(r => ({ name: r.querySelector('.n').value.trim(), loc: r.querySelector('.l').value.trim() }))
-        .filter(c => /^\d+\/\d+\/\d+$/.test(c.loc));
+      cfg.cams = listEl.value.split('\n').map(line => {
+        const m = line.trim().match(/^(.*?)[,\s]*(\d+\/\d+\/\d+)$/);
+        return m && { name: m[1].trim(), loc: m[2] };
+      }).filter(Boolean);
       try { localStorage.setItem('td-panel', JSON.stringify(cfg)); } catch (e) {}
       live = null;
       renderCams();

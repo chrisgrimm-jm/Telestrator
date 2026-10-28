@@ -1,6 +1,6 @@
 {
   "name": "telestrator",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Telestrator overlay system for ATEM switcher",
   "main": "main.js",
   "scripts": {
