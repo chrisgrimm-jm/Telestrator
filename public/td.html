@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Telestrator — TD Panel</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #0c0e12;
+      color: #e8ecf4;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body { display: flex; flex-direction: column; }
+
+    #stage {
+      position: relative;
+      flex: 0 0 auto;
+      width: min(100vw, calc((100vh - 140px) * 16 / 9));
+      aspect-ratio: 16 / 9;
+      margin: 0 auto;
+      background: #000;
+    }
+    #video-feed { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+    #msg {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #55606f; font-size: 17px;
+    }
+
+    #cams {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      padding: 12px;
+      align-content: start;
+    }
+    .cam {
+      min-height: 84px;
+      border-radius: 12px;
+      border: 2px solid #2a3140;
+      background: #1a2030;
+      color: #e8ecf4;
+      font-size: 22px;
+      font-weight: 700;
+      font-family: inherit;
+    }
+    .cam:active { background: #2b4a6b; }
+    .cam.live { background: #b3261e; border-color: #ff6b61; }
+
+    #gear {
+      position: fixed; top: 10px; right: 10px;
+      background: rgba(0, 0, 0, 0.55); color: #9aa4b8;
+      border: 0; border-radius: 20px; padding: 6px 12px; font-size: 14px;
+    }
+    #note { text-align: center; color: #c0392b; font-size: 13px; min-height: 18px; }
+
+    #editor { display: none; padding: 12px; background: #141822; border-top: 1px solid #2a3140; font-size: 14px; }
+    #editor.open { display: block; }
+    #editor label { display: block; margin: 6px 0 2px; color: #9aa4b8; }
+    #editor input {
+      background: #0c0e12; color: #e8ecf4; border: 1px solid #2a3140;
+      border-radius: 6px; padding: 8px; font-size: 15px; width: 100%;
+    }
+    .row { display: grid; grid-template-columns: 1fr 1fr 40px; gap: 6px; margin-top: 6px; }
+    #editor button { padding: 8px 14px; border-radius: 6px; border: 0; background: #2b4a6b; color: #fff; font-size: 14px; margin-top: 8px; }
+    .hint { color: #6a7488; font-size: 12px; margin-top: 8px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="msg">Waiting for the feed…</div>
+    <img id="video-feed" alt="">
+  </div>
+  <div id="note"></div>
+  <div id="cams"></div>
+  <button id="gear">&#9881; Edit</button>
+
+  <div id="editor">
+    <label>Companion address</label>
+    <input id="host" placeholder="192.168.0.75:8000">
+    <label>Cameras &mdash; name and Companion button (page/row/column)</label>
+    <div id="rows"></div>
+    <button id="add">+ Add camera</button>
+    <button id="save">Save</button>
+    <div class="hint">
+      Each button presses <code>/api/location/page/row/column/press</code> on Companion, e.g. <code>1/0/2</code>
+      is page 1, row 0, column 2. The red button is the one you pressed last &mdash; it is a marker on this
+      panel, not read back from the switcher.
+    </div>
+  </div>
+
+  <script>
+    const DEFAULTS = { host: '192.168.0.75:8000', cams: [] };
+    let cfg = DEFAULTS;
+    try { cfg = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('td-panel')) }; } catch (e) {}
+
+    const camsEl = document.getElementById('cams');
+    const noteEl = document.getElementById('note');
+    let live = null;
+
+    function renderCams() {
+      camsEl.innerHTML = '';
+      if (!cfg.cams.length) camsEl.innerHTML = '<div class="hint" style="grid-column:1/-1;text-align:center">No cameras yet — tap Edit to add them.</div>';
+      cfg.cams.forEach((c, i) => {
+        const b = document.createElement('button');
+        b.className = 'cam' + (i === live ? ' live' : '');
+        b.textContent = c.name || `Cam ${i + 1}`;
+        b.onclick = () => press(i);
+        camsEl.appendChild(b);
+      });
+    }
+
+    // POST with no body or custom headers is a "simple" request, so the browser
+    // sends it to Companion without a CORS preflight. We can't read the reply
+    // (no-cors), so a failure to reach Companion is the only thing we can report.
+    async function press(i) {
+      const c = cfg.cams[i];
+      try {
+        await fetch(`http://${cfg.host}/api/location/${c.loc.trim()}/press`, { method: 'POST', mode: 'no-cors' });
+        live = i;
+        noteEl.textContent = '';
+        renderCams();
+      } catch (e) {
+        noteEl.textContent = `Could not reach Companion at ${cfg.host}`;
+      }
+    }
+
+    // --- Editor ---
+    const rowsEl = document.getElementById('rows');
+    function addRow(c = { name: '', loc: '' }) {
+      const r = document.createElement('div');
+      r.className = 'row';
+      r.innerHTML = '<input class="n" placeholder="Name (Cam 1)"><input class="l" placeholder="1/0/0"><button>&times;</button>';
+      r.querySelector('.n').value = c.name;
+      r.querySelector('.l').value = c.loc;
+      r.querySelector('button').onclick = () => r.remove();
+      rowsEl.appendChild(r);
+    }
+    function openEditor() {
+      document.getElementById('host').value = cfg.host;
+      rowsEl.innerHTML = '';
+      (cfg.cams.length ? cfg.cams : [{ name: '', loc: '' }]).forEach(addRow);
+    }
+    document.getElementById('add').onclick = () => addRow();
+    document.getElementById('gear').onclick = () => {
+      const ed = document.getElementById('editor');
+      ed.classList.toggle('open');
+      if (ed.classList.contains('open')) openEditor();
+    };
+    document.getElementById('save').onclick = () => {
+      cfg.host = document.getElementById('host').value.trim().replace(/^https?:\/\//, '') || DEFAULTS.host;
+      cfg.cams = [...rowsEl.querySelectorAll('.row')]
+        .map(r => ({ name: r.querySelector('.n').value.trim(), loc: r.querySelector('.l').value.trim() }))
+        .filter(c => /^\d+\/\d+\/\d+$/.test(c.loc));
+      try { localStorage.setItem('td-panel', JSON.stringify(cfg)); } catch (e) {}
+      live = null;
+      renderCams();
+      document.getElementById('editor').classList.remove('open');
+    };
+    renderCams();
+
+    // --- Live feed (same attach-while-capturing logic as the watch page) ---
+    const videoFeed = document.getElementById('video-feed');
+    const msgEl = document.getElementById('msg');
+    let feedAttached = false;
+    function detach() {
+      feedAttached = false;
+      videoFeed.removeAttribute('src');
+      msgEl.style.display = '';
+    }
+    async function checkVideoFeed() {
+      try {
+        const data = await (await fetch('/api/devices')).json();
+        const running = data.current !== null && data.current !== undefined;
+        if (running && !feedAttached) {
+          feedAttached = true;
+          videoFeed.src = '/video/stream?fps=30';
+          msgEl.style.display = 'none';
+        } else if (!running && feedAttached) detach();
+      } catch (e) { /* retry on next poll */ }
+    }
+    videoFeed.onerror = detach;
+    checkVideoFeed();
+    setInterval(checkVideoFeed, 3000);
+  </script>
+</body>
+</html>
