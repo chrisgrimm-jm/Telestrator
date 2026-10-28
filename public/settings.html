@@ -296,7 +296,7 @@
     const urlsDiv = document.getElementById('urls');
     const logDiv = document.getElementById('log');
 
-    const baseUrl = `${location.protocol}//${location.host}`;
+    let baseUrl = `${location.protocol}//${location.host}`;
 
     function showUrls() {
       urlsDiv.innerHTML = `
@@ -326,21 +326,28 @@
         </div>
       `;
     }
-    showUrls();
-    // The watch-only server runs on its own port
-    fetch('/api/status').then(r => r.json()).then(s => {
-      const el = document.getElementById('watch-url');
-      if (el && s.watchPort) {
-        el.textContent = `${location.protocol}//${location.hostname}:${s.watchPort}`;
+    // This window loads from localhost, but the URLs are for other machines,
+    // so swap in the computer's LAN address once the server tells us it.
+    function fillUrls(watchPort) {
+      if (watchPort) {
+        document.getElementById('watch-url').textContent = `${location.protocol}//${new URL(baseUrl).hostname}:${watchPort}`;
       }
+      document.getElementById('obs-source-url').textContent = `${baseUrl}/output.html`;
+      document.getElementById('companion-clear').textContent = `${baseUrl}/api/clear`;
+      document.getElementById('companion-undo').textContent = `${baseUrl}/api/undo`;
+      document.getElementById('companion-hide').textContent = `${baseUrl}/api/hide/toggle`;
+      document.getElementById('companion-autoclear').textContent = `${baseUrl}/api/autoclear/toggle?seconds=15`;
+      document.getElementById('companion-keymode').textContent = `${baseUrl}/api/keymode/transparent`;
+      document.getElementById('companion-status').textContent = `${baseUrl}/api/status`;
+    }
+    showUrls();
+    fillUrls();
+    fetch('/api/status').then(r => r.json()).then(s => {
+      const host = s.ip && s.ip !== 'localhost' ? s.ip : location.hostname;
+      baseUrl = `${location.protocol}//${host}:${location.port || 80}`;
+      showUrls();
+      fillUrls(s.watchPort);
     }).catch(() => {});
-    document.getElementById('obs-source-url').textContent = `${baseUrl}/output.html`;
-    document.getElementById('companion-clear').textContent = `${baseUrl}/api/clear`;
-    document.getElementById('companion-undo').textContent = `${baseUrl}/api/undo`;
-    document.getElementById('companion-hide').textContent = `${baseUrl}/api/hide/toggle`;
-    document.getElementById('companion-autoclear').textContent = `${baseUrl}/api/autoclear/toggle?seconds=15`;
-    document.getElementById('companion-keymode').textContent = `${baseUrl}/api/keymode/transparent`;
-    document.getElementById('companion-status').textContent = `${baseUrl}/api/status`;
 
     async function loadDevices() {
       try {

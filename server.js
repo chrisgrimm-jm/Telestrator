@@ -493,7 +493,8 @@ app.get('/api/status', (req, res) => {
     testVideo: testVideo ? testVideo.videoId : null,
     clients: wss.clients.size,
     watchers: watchWss.clients.size,
-    watchPort: WATCH_PORT
+    watchPort: WATCH_PORT,
+    ip: getLocalIP()
   });
 });
 
