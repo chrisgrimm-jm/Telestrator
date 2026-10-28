@@ -482,6 +482,30 @@ companionEndpoint('/api/keymode/luma', () => setKeyMode('luma'));
 companionEndpoint('/api/keymode/chroma', () => setKeyMode('chroma'));
 companionEndpoint('/api/keymode/transparent', () => setKeyMode('transparent'));
 
+// The TD panel presses Companion buttons through here rather than straight
+// from the browser: the phone only has to reach this computer, and we can
+// report Companion's real answer (a browser can't read a cross-origin reply).
+// Only private-network hosts are allowed so this can't be used as an open relay.
+const PRIVATE_HOST = /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+):\d{1,5}$/;
+app.post('/api/companion/press', express.json(), async (req, res) => {
+  const { host, loc } = req.body || {};
+  if (!PRIVATE_HOST.test(host || '') || !/^\d+\/\d+\/\d+$/.test(loc || '')) {
+    res.json({ ok: false, reason: 'bad Companion address or button location' });
+    return;
+  }
+  try {
+    const r = await fetch(`http://${host}/api/location/${loc}/press`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(3000)
+    });
+    console.log(`[companion] press ${loc} on ${host} -> ${r.status}`);
+    res.json({ ok: r.ok, status: r.status, reason: r.ok ? null : `Companion answered ${r.status}` });
+  } catch (e) {
+    console.error(`[companion] press ${loc} on ${host} failed: ${e.message}`);
+    res.json({ ok: false, reason: `this computer could not reach Companion at ${host}` });
+  }
+});
+
 // Status for Companion button feedback (poll this with Generic HTTP feedbacks)
 app.get('/api/status', (req, res) => {
   res.json({

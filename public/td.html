@@ -151,18 +151,19 @@
       });
     }
 
-    // POST with no body or custom headers is a "simple" request, so the browser
-    // sends it to Companion without a CORS preflight. We can't read the reply
-    // (no-cors), so a failure to reach Companion is the only thing we can report.
+    // Presses go through the Telestrator computer, which reports Companion's real answer
     async function press(i) {
       const c = cfg.cams[i];
       try {
-        await fetch(`http://${cfg.host}/api/location/${c.loc.trim()}/press`, { method: 'POST', mode: 'no-cors' });
-        live = i;
-        noteEl.textContent = '';
-        renderCams();
+        const r = await (await fetch('/api/companion/press', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ host: cfg.host, loc: c.loc })
+        })).json();
+        noteEl.textContent = r.ok ? '' : `${c.name || 'Camera'}: ${r.reason}`;
+        if (r.ok) { live = i; renderCams(); }
       } catch (e) {
-        noteEl.textContent = `Could not reach Companion at ${cfg.host}`;
+        noteEl.textContent = 'Could not reach the Telestrator computer';
       }
     }
 
