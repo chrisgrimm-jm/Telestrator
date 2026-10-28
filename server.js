@@ -1,38 +1,9 @@
 const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
-const { spawn } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-
-// Resolve ffmpeg: prefer the binary bundled with the app (ffmpeg-static),
-// then fall back to system locations (GUI apps on macOS don't inherit shell PATH)
-function findFfmpeg() {
-  try {
-    let bundled = require('ffmpeg-static');
-    if (bundled) {
-      // When packaged by Electron, the binary lives outside the asar archive
-      bundled = bundled.replace('app.asar', 'app.asar.unpacked');
-      if (fs.existsSync(bundled)) return bundled;
-    }
-  } catch (e) { /* ffmpeg-static not installed; use system ffmpeg */ }
-  const candidates = os.platform() === 'win32'
-    ? [
-        'C:\\ffmpeg\\bin\\ffmpeg.exe',
-        path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe')
-      ]
-    : [
-        '/opt/homebrew/bin/ffmpeg',
-        '/usr/local/bin/ffmpeg',
-        '/usr/bin/ffmpeg'
-      ];
-  for (const p of candidates) {
-    try { if (p && fs.existsSync(p)) return p; } catch (e) {}
-  }
-  return 'ffmpeg'; // fall back to PATH
-}
-const FFMPEG = findFfmpeg();
 
 // Shown in Settings so we can confirm which build is actually installed
 const APP_VERSION = (() => {
@@ -78,7 +49,6 @@ watchApp.use((req, res) => res.status(404).send('Watch only.'));
 // --- State ---
 let strokes = [];
 let currentVideoDevice = null;
-let ffmpegProcess = null;
 let captureWs = null;      // Electron hidden window doing getUserMedia capture
 let captureDevices = [];   // devices reported by the Electron capture window
 let captureError = null;   // last capture failure, surfaced in Settings UI
@@ -250,82 +220,6 @@ function broadcast(msg, excludeSender) {
   watchWss.clients.forEach(send);
 }
 
-// --- Video capture (MJPEG stream from capture card) ---
-// macOS: AVFoundation (device by index). Windows: DirectShow (device by name).
-function listVideoDevices() {
-  return new Promise((resolve) => {
-    const platform = os.platform();
-    let args;
-    if (platform === 'darwin') {
-      args = ['-f', 'avfoundation', '-list_devices', 'true', '-i', '""'];
-    } else if (platform === 'win32') {
-      args = ['-f', 'dshow', '-list_devices', 'true', '-i', 'dummy'];
-    } else {
-      resolve([]);
-      return;
-    }
-
-    let proc;
-    try {
-      proc = spawn(FFMPEG, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    } catch (e) {
-      resolve([]);
-      return;
-    }
-    proc.on('error', () => resolve([]));
-
-    let output = '';
-    proc.stderr.on('data', (d) => { output += d.toString(); });
-    proc.on('close', () => {
-      const devices = [];
-      const lines = output.split('\n');
-      if (platform === 'darwin') {
-        let inVideo = false;
-        for (const line of lines) {
-          if (line.includes('AVFoundation video devices')) inVideo = true;
-          else if (line.includes('AVFoundation audio devices')) inVideo = false;
-          else if (inVideo) {
-            const match = line.match(/\[(\d+)\]\s+(.+)/);
-            if (match) {
-              devices.push({ index: match[1], name: match[2].trim() });
-            }
-          }
-        }
-      } else {
-        // dshow lists: [dshow @ ...] "Device Name" (video)
-        for (const line of lines) {
-          const match = line.match(/"([^"]+)"\s+\(video\)/);
-          if (match) {
-            devices.push({ index: match[1], name: match[1] });
-          }
-        }
-      }
-      resolve(devices);
-    });
-  });
-}
-
-function buildCaptureArgs(deviceIndex) {
-  const common = ['-f', 'mjpeg', '-q:v', '3', '-r', '30', '-an', 'pipe:1'];
-  if (os.platform() === 'win32') {
-    return [
-      '-f', 'dshow',
-      '-framerate', '30',
-      '-video_size', '1920x1080',
-      '-i', `video=${deviceIndex}`,
-      ...common
-    ];
-  }
-  return [
-    '-f', 'avfoundation',
-    '-framerate', '30',
-    '-video_size', '1920x1080',
-    '-pixel_format', 'uyvy422',
-    '-i', `${deviceIndex}:none`,
-    ...common
-  ];
-}
-
 // Write a JPEG frame to every open /video/stream response.
 // Frames are dropped for any client whose socket is still draining — on a
 // live telestrator a fresh frame always beats a queued one, and without
@@ -354,17 +248,16 @@ function distributeFrame(frame) {
 }
 
 function captureActive() {
-  return (captureWs && currentVideoDevice !== null) || ffmpegProcess !== null;
+  return captureWs !== null && currentVideoDevice !== null;
 }
 
 // Everything needed to diagnose a "no video" problem without a terminal
 function captureInfo() {
   return {
-    engine: captureWs ? 'electron' : 'ffmpeg-fallback',
     captureWindowConnected: captureWs !== null,
     cameraPermission: capturePermission,
-    deviceCount: captureWs ? captureDevices.length : null,
-    devices: captureWs ? captureDevices.map(d => d.name) : null,
+    deviceCount: captureDevices.length,
+    devices: captureDevices.map(d => d.name),
     currentDevice: currentVideoDevice,
     source: captureSource,
     previewFps: captureFps,
@@ -375,8 +268,6 @@ function captureInfo() {
     framesDropped,
     lastError: captureError,
     platform: `${os.platform()} ${os.arch()}`,
-    ffmpegPath: FFMPEG,
-    ffmpegExists: (() => { try { return fs.existsSync(FFMPEG); } catch (e) { return false; } })(),
     appVersion: APP_VERSION,
     buildId: BUILD_ID
   };
@@ -495,89 +386,28 @@ app.post('/api/devices/rescan', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/devices', async (req, res) => {
-  // Electron capture window (getUserMedia) is the primary source — it sees
-  // UVC cameras AND virtual cameras (OBS etc.). ffmpeg is the headless fallback.
-  if (captureWs) {
-    res.json({ devices: captureDevices, current: currentVideoDevice });
-    return;
-  }
-  const devices = await listVideoDevices();
-  res.json({ devices, current: currentVideoDevice });
+app.get('/api/devices', (req, res) => {
+  res.json({ devices: captureDevices, current: currentVideoDevice });
 });
 
 app.post('/api/capture/start', express.json(), (req, res) => {
-  const device = req.body.device;
-
-  if (captureWs) {
-    currentVideoDevice = device;
-    captureWs.send(JSON.stringify({ type: 'capture-start', deviceId: device }));
-    res.json({ ok: true, device, via: 'electron' });
+  if (!captureWs) {
+    res.json({ ok: false, reason: 'capture window not connected' });
     return;
   }
-
-  // Headless fallback: ffmpeg
-  if (ffmpegProcess) {
-    ffmpegProcess.kill('SIGTERM');
-    ffmpegProcess = null;
-  }
-
-  currentVideoDevice = device || '0';
-
-  ffmpegProcess = spawn(FFMPEG, buildCaptureArgs(currentVideoDevice), { stdio: ['pipe', 'pipe', 'pipe'] });
-
-  ffmpegProcess.on('error', (err) => {
-    console.error('ffmpeg failed to start (is it installed?):', err.message);
-    ffmpegProcess = null;
-    currentVideoDevice = null;
-  });
-
-  // Parse MJPEG stream from ffmpeg stdout into individual frames
-  let buffer = Buffer.alloc(0);
-  const SOI = Buffer.from([0xff, 0xd8]);
-  const EOI = Buffer.from([0xff, 0xd9]);
-  ffmpegProcess.stdout.on('data', (chunk) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    while (true) {
-      const soiIdx = buffer.indexOf(SOI);
-      const eoiIdx = buffer.indexOf(EOI, soiIdx);
-      if (soiIdx === -1 || eoiIdx === -1) break;
-      const frame = buffer.subarray(soiIdx, eoiIdx + 2);
-      buffer = buffer.subarray(eoiIdx + 2);
-      distributeFrame(frame);
-    }
-  });
-
-  ffmpegProcess.stderr.on('data', (d) => {
-    const line = d.toString().trim();
-    if (line && !line.startsWith('frame=')) {
-      console.log('[ffmpeg]', line);
-    }
-  });
-
-  ffmpegProcess.on('close', (code) => {
-    console.log(`ffmpeg exited with code ${code}`);
-    ffmpegProcess = null;
-    currentVideoDevice = null;
-  });
-
-  res.json({ ok: true, device: currentVideoDevice, via: 'ffmpeg' });
+  currentVideoDevice = req.body.device;
+  captureWs.send(JSON.stringify({ type: 'capture-start', deviceId: currentVideoDevice }));
+  res.json({ ok: true, device: currentVideoDevice });
 });
 
 app.post('/api/capture/stop', (req, res) => {
-  if (captureWs) {
-    captureWs.send(JSON.stringify({ type: 'capture-stop' }));
-  }
-  if (ffmpegProcess) {
-    ffmpegProcess.kill('SIGTERM');
-    ffmpegProcess = null;
-  }
+  if (captureWs) captureWs.send(JSON.stringify({ type: 'capture-stop' }));
   currentVideoDevice = null;
   res.json({ ok: true });
 });
 
 // MJPEG stream endpoint — frames come from the Electron capture window
-// (or ffmpeg in headless mode) via distributeFrame(). Shared by both ports.
+// via distributeFrame(). Shared by both ports.
 function mjpegHandler(req, res) {
   if (!captureActive()) {
     res.status(503).send('No capture running. Start capture first.');
@@ -651,7 +481,6 @@ function setKeyMode(mode) {
 companionEndpoint('/api/keymode/luma', () => setKeyMode('luma'));
 companionEndpoint('/api/keymode/chroma', () => setKeyMode('chroma'));
 companionEndpoint('/api/keymode/transparent', () => setKeyMode('transparent'));
-companionEndpoint('/api/keymode/toggle', () => setKeyMode(keyMode === 'luma' ? 'chroma' : 'luma'));
 
 // Status for Companion button feedback (poll this with Generic HTTP feedbacks)
 app.get('/api/status', (req, res) => {
@@ -680,17 +509,6 @@ function getLocalIP() {
   }
   return 'localhost';
 }
-
-// Make sure ffmpeg dies with us (Electron quit, Ctrl+C, crashes)
-function cleanupCapture() {
-  if (ffmpegProcess) {
-    try { ffmpegProcess.kill('SIGTERM'); } catch (e) {}
-    ffmpegProcess = null;
-  }
-}
-process.on('exit', cleanupCapture);
-process.on('SIGINT', () => { cleanupCapture(); process.exit(0); });
-process.on('SIGTERM', () => { cleanupCapture(); process.exit(0); });
 
 server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIP();

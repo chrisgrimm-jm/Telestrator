@@ -1,10 +1,10 @@
 # Download
 
-**Windows installer:** [Telestrator-Setup-1.0.0.exe](Telestrator-Setup-1.0.0.exe)
+**Latest installers:** [Releases page](https://github.com/chrisgrimm-jm/Telestrator/releases/latest)
 
-Click the file above, then press the **Download** button (or the download icon) on
-the file page. Run it to install — it includes everything needed, so no Node.js
-or other downloads are required on the target machine.
+Windows: `Telestrator.Setup.<version>.exe`. Mac: the `.dmg` without `arm64` in the
+name is for Intel, the one with `arm64` is for Apple Silicon. Each includes
+everything needed, so no Node.js or other downloads are required.
 
 Windows SmartScreen may warn that the publisher is unknown, because the app is
 not code-signed. Click **More info → Run anyway**.

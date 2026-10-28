@@ -263,7 +263,7 @@
     </div>
     <div class="url-item">
       <div>
-        <div class="url-label">Switch key mode (also /api/keymode/luma, /api/keymode/chroma)</div>
+        <div class="url-label">Set key mode (/api/keymode/luma, /api/keymode/chroma, /api/keymode/transparent)</div>
         <div class="url-value" id="companion-keymode"></div>
       </div>
     </div>
@@ -339,7 +339,7 @@
     document.getElementById('companion-undo').textContent = `${baseUrl}/api/undo`;
     document.getElementById('companion-hide').textContent = `${baseUrl}/api/hide/toggle`;
     document.getElementById('companion-autoclear').textContent = `${baseUrl}/api/autoclear/toggle?seconds=15`;
-    document.getElementById('companion-keymode').textContent = `${baseUrl}/api/keymode/toggle`;
+    document.getElementById('companion-keymode').textContent = `${baseUrl}/api/keymode/transparent`;
     document.getElementById('companion-status').textContent = `${baseUrl}/api/status`;
 
     async function loadDevices() {
@@ -347,14 +347,14 @@
         const res = await fetch('/api/devices');
         const data = await res.json();
         deviceSelect.innerHTML = '';
+        deviceSelect.dataset.n = data.devices.length;
         if (data.devices.length === 0) {
-          deviceSelect.innerHTML = '<option value="0">Default (index 0)</option>';
-          addLog('No devices detected (ffmpeg not available or not macOS). Using default index 0.');
+          deviceSelect.innerHTML = '<option value="">No cameras found yet</option>';
         } else {
           data.devices.forEach(d => {
             const opt = document.createElement('option');
             opt.value = d.index;
-            opt.textContent = `[${d.index}] ${d.name}`;
+            opt.textContent = d.name;
             deviceSelect.appendChild(opt);
           });
         }
@@ -415,7 +415,7 @@
       const banner = document.getElementById('diag-banner');
       let msg, bg;
       if (!d.captureWindowConnected) {
-        msg = 'Capture engine NOT running — falling back to ffmpeg. Device list will be limited.';
+        msg = 'Capture engine NOT running — no cameras can be listed. Restart the app.';
         bg = '#7d2b2b';
       } else if (d.cameraPermission === 'denied') {
         msg = 'Camera permission DENIED by macOS. Enable Telestrator under System Settings → Privacy & Security → Camera.';
@@ -437,16 +437,14 @@
       const lines = [
         `App version:        ${d.appVersion}  (build: ${d.buildId})`,
         `Platform:           ${d.platform}`,
-        `Capture engine:     ${d.engine}`,
         `Capture window:     ${d.captureWindowConnected ? 'connected' : 'NOT CONNECTED'}`,
         `Camera permission:  ${d.cameraPermission}`,
-        `Cameras found:      ${d.deviceCount === null ? 'n/a (ffmpeg mode)' : d.deviceCount}`,
+        `Cameras found:      ${d.deviceCount}`,
         ...(d.devices || []).map((n, i) => `   [${i}] ${n}`),
         `Currently capturing: ${d.capturing ? 'yes' : 'no'}`,
         `Source from camera: ${d.source ? `${d.source.width}x${d.source.height} @ ${d.source.frameRate} fps` : 'unknown'}`,
         `Preview:            ${d.previewSize ? d.previewSize.width + 'x' + d.previewSize.height : '?'} @ ${d.previewFps} fps   (watchers ${d.watchFps} fps)`,
         `Stream viewers:     ${d.streamViewers}`,
-        `Bundled ffmpeg:     ${d.ffmpegExists ? 'found' : 'MISSING'} (${d.ffmpegPath})`,
         `Last error:         ${d.lastError || 'none'}`
       ];
       document.getElementById('diag-body').textContent = lines.join('\n');
@@ -582,6 +580,11 @@
         }
         if (msg.type === 'state' && msg.keyMode) {
           document.getElementById('keymode-select').value = msg.keyMode;
+        }
+        // The hidden capture window finishes listing cameras after this page
+        // has already loaded, so repopulate the dropdown when it reports in.
+        if (msg.type === 'capture-info' && msg.deviceCount !== Number(deviceSelect.dataset.n)) {
+          loadDevices();
         }
         if (msg.type === 'keymode') {
           document.getElementById('keymode-select').value = msg.keyMode;
